@@ -40,6 +40,9 @@ function App() {
   const [scanners, setScanners] = useState<ScannerStatus[]>([]);
   const [selectedService, setSelectedService] = useState<string>("all");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [activeRibbonTab, setActiveRibbonTab] = useState<"home" | "scan" | "view" | "intel">(
+    "home",
+  );
   const [error, setError] = useState<string | null>(null);
 
   async function loadMvpData() {
@@ -105,22 +108,103 @@ function App() {
   }, [snapshot]);
 
   return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Topixa</p>
-          <h1>Network Intelligence Workbench</h1>
+    <main className="desktop-root">
+      <header className="menubar">
+        <div className="app-identity">
+          <strong>Topixa</strong>
+          <span>Network Intelligence</span>
         </div>
-        <button className="reload-btn" type="button" onClick={loadMvpData}>
-          Reload Snapshot
-        </button>
+        <nav className="menu-items" aria-label="Application menu">
+          <button type="button" className="menu-btn">File</button>
+          <button type="button" className="menu-btn">Edit</button>
+          <button type="button" className="menu-btn">Scan</button>
+          <button type="button" className="menu-btn">View</button>
+          <button type="button" className="menu-btn">Tools</button>
+          <button type="button" className="menu-btn">Help</button>
+        </nav>
       </header>
+
+      <section className="ribbon-tabs" aria-label="Ribbon tabs">
+        <button
+          type="button"
+          className={activeRibbonTab === "home" ? "ribbon-tab active" : "ribbon-tab"}
+          onClick={() => setActiveRibbonTab("home")}
+        >
+          Home
+        </button>
+        <button
+          type="button"
+          className={activeRibbonTab === "scan" ? "ribbon-tab active" : "ribbon-tab"}
+          onClick={() => setActiveRibbonTab("scan")}
+        >
+          Scan
+        </button>
+        <button
+          type="button"
+          className={activeRibbonTab === "view" ? "ribbon-tab active" : "ribbon-tab"}
+          onClick={() => setActiveRibbonTab("view")}
+        >
+          View
+        </button>
+        <button
+          type="button"
+          className={activeRibbonTab === "intel" ? "ribbon-tab active" : "ribbon-tab"}
+          onClick={() => setActiveRibbonTab("intel")}
+        >
+          Intelligence
+        </button>
+      </section>
+
+      <section className="ribbon-panel" aria-label="Ribbon actions">
+        <div className="ribbon-group">
+          <p className="ribbon-title">Session</p>
+          <div className="ribbon-actions">
+            <button className="ribbon-action primary" type="button" onClick={loadMvpData}>
+              Refresh Snapshot
+            </button>
+            <button className="ribbon-action" type="button">Open Scan</button>
+            <button className="ribbon-action" type="button">Export JSON</button>
+          </div>
+        </div>
+        <div className="ribbon-group">
+          <p className="ribbon-title">Filter</p>
+          <div className="ribbon-actions">
+            {serviceOptions.slice(0, 5).map((option) => (
+              <button
+                key={`quick-${option}`}
+                type="button"
+                className={option === selectedService ? "ribbon-action active" : "ribbon-action"}
+                onClick={() => setSelectedService(option)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="ribbon-group compact">
+          <p className="ribbon-title">Workspace</p>
+          <div className="ribbon-actions">
+            <button className="ribbon-action" type="button">Graph</button>
+            <button className="ribbon-action" type="button">Table</button>
+            <button className="ribbon-action" type="button">Timeline</button>
+          </div>
+        </div>
+      </section>
 
       {error ? <p className="error-banner">{error}</p> : null}
 
-      <section className="workspace-grid">
-        <aside className="panel panel-left">
-          <h2>Scanner Readiness</h2>
+      <section className="workspace-layout">
+        <aside className="left-pane">
+          <p className="pane-caption">Navigator</p>
+          <ul className="module-list">
+            <li className="module-item active">Topology</li>
+            <li className="module-item">Assets</li>
+            <li className="module-item">Services</li>
+            <li className="module-item">Alerts</li>
+            <li className="module-item">Timeline</li>
+          </ul>
+
+          <p className="pane-caption">Scanners</p>
           <ul className="scanner-list">
             {scanners.map((scanner) => (
               <li key={scanner.name} className={scanner.available ? "status-up" : "status-down"}>
@@ -130,7 +214,7 @@ function App() {
             ))}
           </ul>
 
-          <h2>Service Filter</h2>
+          <p className="pane-caption">Service Filter</p>
           <div className="service-filter-grid">
             {serviceOptions.map((option) => (
               <button
@@ -145,9 +229,12 @@ function App() {
           </div>
         </aside>
 
-        <section className="panel panel-canvas">
-          <div className="canvas-header">
-            <h2>Topology View</h2>
+        <section className="center-pane">
+          <div className="toolstrip">
+            <div>
+              <p className="pane-caption">Workspace</p>
+              <p className="toolbar-title">Network Topology Graph</p>
+            </div>
             <p>
               {visibleNodes.length} hosts · {visibleEdges.length} links · {snapshot?.scan_id ?? "no scan"}
             </p>
@@ -191,7 +278,8 @@ function App() {
           </div>
         </section>
 
-        <aside className="panel panel-right">
+        <aside className="right-pane">
+          <p className="pane-caption">Inspector</p>
           <h2>Host Intelligence</h2>
           {selectedNode ? (
             <div className="intel-stack">
@@ -224,8 +312,9 @@ function App() {
         </aside>
       </section>
 
-      <footer className="statusline">
-        {snapshot ? `Generated at ${snapshot.generated_at}` : "Waiting for initial snapshot..."}
+      <footer className="statusbar">
+        <span>{snapshot ? `Generated at ${snapshot.generated_at}` : "Waiting for initial snapshot..."}</span>
+        <span>{selectedNode ? `Selected: ${selectedNode.ip}` : "Selected: none"}</span>
       </footer>
     </main>
   );
