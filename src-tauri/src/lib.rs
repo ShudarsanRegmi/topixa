@@ -1,5 +1,11 @@
-use serde::Serialize;
+use roxmltree::Document;
+use serde::{Deserialize, Serialize};
 use std::env;
+use std::fs;
+use std::path::PathBuf;
+use std::process::{Command, Output, Stdio};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Manager};
 
 #[derive(Clone, Serialize)]
 struct ScannerStatus {
@@ -8,31 +14,202 @@ struct ScannerStatus {
 }
 
 #[derive(Clone, Serialize)]
-struct HostNode {
-    id: String,
-    ip: String,
-    label: String,
-    subnet: String,
-    os_family: String,
-    services: Vec<String>,
-    risk_score: u8,
-    x: f32,
-    y: f32,
+struct ScanPortResult {
+    port: u16,
+    protocol: String,
+    state: String,
+    service: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
-struct HostEdge {
-    source: String,
-    target: String,
-    relation: String,
+struct ScanHostResult {
+    address: String,
+    hostname: Option<String>,
+    state: String,
+    ports: Vec<ScanPortResult>,
 }
 
 #[derive(Clone, Serialize)]
-struct TopologySnapshot {
+struct ScanSummary {
+    total_hosts: usize,
+    hosts_up: usize,
+    hosts_down: usize,
+    open_ports: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct ScanExecutionResult {
     scan_id: String,
-    generated_at: String,
-    nodes: Vec<HostNode>,
-    edges: Vec<HostEdge>,
+    operation_id: String,
+    target: String,
+    profile_name: String,
+    command: String,
+    started_at: String,
+    finished_at: String,
+    duration_ms: u128,
+    summary: ScanSummary,
+    hosts: Vec<ScanHostResult>,
+    stdout: String,
+    stderr: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ScanJob {
+    id: String,
+    target: String,
+    profile_id: String,
+    profile_name: String,
+    nmap_flags: String,
+    status: String,
+    created_at: String,
+    #[serde(default)]
+    result_summary: Option<String>,
+    #[serde(default)]
+    finished_at: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct Operation {
+    id: String,
+    name: String,
+    description: String,
+    target_scope: String,
+    created_at: String,
+    updated_at: String,
+    scan_jobs: Vec<ScanJob>,
+}
+
+#[derive(Clone, Serialize)]
+struct OperationSummary {
+    id: String,
+    name: String,
+    description: String,
+    target_scope: String,
+    created_at: String,
+    updated_at: String,
+    scan_count: usize,
+}
+
+#[derive(Clone, Serialize)]
+struct ScanTemplate {
+    id: String,
+    name: String,
+    description: String,
+    nmap_flags: String,
+    category: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct OperationStore {
+    operations: Vec<Operation>,
+}
+
+#[derive(Clone, Deserialize)]
+struct NewOperationInput {
+    name: String,
+    description: Option<String>,
+    target_scope: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct RunScanInput {
+    operation_id: String,
+    target: String,
+    profile_id: String,
+    custom_flags: Option<String>,
+}
+
+fn now_timestamp() -> String {
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs());
+    format!("{}", seconds)
+}
+
+fn next_id(prefix: &str) -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis());
+    format!("{}-{}", prefix, millis)
+}
+
+fn scan_templates() -> Vec<ScanTemplate> {
+    vec![
+        ScanTemplate {
+            id: "quick-ping".to_string(),
+            name: "Quick Ping Sweep".to_string(),
+            description: "Identify live hosts quickly using ICMP/ARP discovery.".to_string(),
+            nmap_flags: "-sn".to_string(),
+            category: "discovery".to_string(),
+        },
+        ScanTemplate {
+            id: "top-ports".to_string(),
+            name: "Top 1000 TCP Ports".to_string(),
+            description: "Fast default port coverage for broad reconnaissance.".to_string(),
+            nmap_flags: "-sS --top-ports 1000".to_string(),
+            category: "recon".to_string(),
+        },
+        ScanTemplate {
+            id: "service-version".to_string(),
+            name: "Service Version Detection".to_string(),
+            description: "Detect service banners and version fingerprints.".to_string(),
+            nmap_flags: "-sV -Pn".to_string(),
+            category: "service".to_string(),
+        },
+        ScanTemplate {
+            id: "safe-script".to_string(),
+            name: "Safe NSE Audit".to_string(),
+            description: "Run non-intrusive script checks using safe category scripts.".to_string(),
+            nmap_flags: "-sV --script=safe".to_string(),
+            category: "audit".to_string(),
+        },
+        ScanTemplate {
+            id: "full-tcp".to_string(),
+            name: "Full TCP Range".to_string(),
+            description: "Comprehensive 1-65535 TCP scan with service detection.".to_string(),
+            nmap_flags: "-sS -p- -sV".to_string(),
+            category: "deep".to_string(),
+        },
+    ]
+}
+
+fn operation_store_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("failed to resolve app data dir: {}", error))?;
+
+    fs::create_dir_all(&app_data_dir)
+        .map_err(|error| format!("failed to create app data dir: {}", error))?;
+
+    Ok(app_data_dir.join("operations.json"))
+}
+
+fn load_operation_store(app: &AppHandle) -> Result<OperationStore, String> {
+    let store_path = operation_store_path(app)?;
+
+    if !store_path.exists() {
+        return Ok(OperationStore {
+            operations: Vec::new(),
+        });
+    }
+
+    let raw = fs::read_to_string(&store_path)
+        .map_err(|error| format!("failed to read operations store: {}", error))?;
+
+    serde_json::from_str(&raw).map_err(|error| format!("failed to parse operations store: {}", error))
+}
+
+fn save_operation_store(app: &AppHandle, store: &OperationStore) -> Result<(), String> {
+    let store_path = operation_store_path(app)?;
+
+    let serialized = serde_json::to_string_pretty(store)
+        .map_err(|error| format!("failed to serialize operations store: {}", error))?;
+
+    fs::write(store_path, serialized)
+        .map_err(|error| format!("failed to write operations store: {}", error))?;
+
+    Ok(())
 }
 
 fn has_command_in_path(command_name: &str) -> bool {
@@ -58,6 +235,329 @@ fn has_command_in_path(command_name: &str) -> bool {
     false
 }
 
+fn split_flags(flags: &str) -> Vec<String> {
+    flags
+        .split_whitespace()
+        .filter(|part| !part.trim().is_empty())
+        .map(|part| part.to_string())
+        .collect()
+}
+
+fn output_requires_root(stderr: &str) -> bool {
+    let lowered = stderr.to_lowercase();
+    lowered.contains("requires root privileges")
+        || lowered.contains("you requested a scan type which requires root privileges")
+}
+
+fn run_nmap_process(flags: &str, target: &str, use_pkexec: bool) -> Result<Output, String> {
+    let mut args = split_flags(flags);
+    args.push("-oX".to_string());
+    args.push("-".to_string());
+    args.push(target.to_string());
+
+    let mut command = if use_pkexec {
+        if !has_command_in_path("pkexec") {
+            return Err("scan requires elevated privileges, but pkexec is not available".to_string());
+        }
+
+        let mut command = Command::new("pkexec");
+        command.arg("nmap");
+        command
+    } else {
+        Command::new("nmap")
+    };
+
+    command.args(args);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    command
+        .output()
+        .map_err(|error| format!("failed to execute nmap: {}", error))
+}
+
+fn extract_nmap_xml_payload(output: &str) -> Option<&str> {
+    let start_candidates = ["<?xml", "<nmaprun"];
+
+    start_candidates
+        .iter()
+        .filter_map(|candidate| output.find(candidate).map(|index| &output[index..]))
+        .next()
+}
+
+fn sanitize_nmap_xml(xml: &str) -> String {
+    xml.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !trimmed.starts_with("<!DOCTYPE") && !trimmed.starts_with("<?xml-stylesheet")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .replace("<!DOCTYPE nmaprun>", "")
+        .replace("<?xml-stylesheet href=\"file:///usr/bin/../share/nmap/nmap.xsl\" type=\"text/xsl\"?>", "")
+}
+
+fn parse_nmap_xml(xml: &str) -> Result<(Vec<ScanHostResult>, ScanSummary), String> {
+    let sanitized_xml = sanitize_nmap_xml(xml);
+    let document = Document::parse(&sanitized_xml)
+        .map_err(|error| format!("failed to parse nmap XML: {}", error))?;
+
+    let mut hosts = Vec::new();
+    let mut total_hosts = 0usize;
+    let mut hosts_up = 0usize;
+    let mut hosts_down = 0usize;
+    let mut open_ports = 0usize;
+
+    for host_node in document.descendants().filter(|node| node.has_tag_name("host")) {
+        total_hosts += 1;
+
+        let state = host_node
+            .children()
+            .find(|node| node.has_tag_name("status"))
+            .and_then(|node| node.attribute("state"))
+            .unwrap_or("unknown")
+            .to_string();
+
+        if state == "up" {
+            hosts_up += 1;
+        } else if state == "down" {
+            hosts_down += 1;
+        }
+
+        let address = host_node
+            .children()
+            .find(|node| node.has_tag_name("address") && node.attribute("addrtype") == Some("ipv4"))
+            .and_then(|node| node.attribute("addr"))
+            .or_else(|| {
+                host_node
+                    .children()
+                    .find(|node| node.has_tag_name("address"))
+                    .and_then(|node| node.attribute("addr"))
+            })
+            .unwrap_or("unknown")
+            .to_string();
+
+        let hostname = host_node
+            .descendants()
+            .find(|node| node.has_tag_name("hostname"))
+            .and_then(|node| node.attribute("name"))
+            .map(|name| name.to_string());
+
+        let mut ports = Vec::new();
+        if let Some(ports_node) = host_node.children().find(|node| node.has_tag_name("ports")) {
+            for port_node in ports_node.children().filter(|node| node.has_tag_name("port")) {
+                let port = port_node
+                    .attribute("portid")
+                    .and_then(|value| value.parse::<u16>().ok())
+                    .unwrap_or(0);
+                let protocol = port_node.attribute("protocol").unwrap_or("tcp").to_string();
+                let port_state = port_node
+                    .children()
+                    .find(|node| node.has_tag_name("state"))
+                    .and_then(|node| node.attribute("state"))
+                    .unwrap_or("unknown")
+                    .to_string();
+                let service = port_node
+                    .children()
+                    .find(|node| node.has_tag_name("service"))
+                    .and_then(|node| node.attribute("name"))
+                    .map(|value| value.to_string());
+
+                if port_state == "open" {
+                    open_ports += 1;
+                }
+
+                ports.push(ScanPortResult {
+                    port,
+                    protocol,
+                    state: port_state,
+                    service,
+                });
+            }
+        }
+
+        hosts.push(ScanHostResult {
+            address,
+            hostname,
+            state,
+            ports,
+        });
+    }
+
+    Ok((
+        hosts,
+        ScanSummary {
+            total_hosts,
+            hosts_up,
+            hosts_down,
+            open_ports,
+        },
+    ))
+}
+
+fn update_operation_scan_job(
+    store: &mut OperationStore,
+    operation_id: &str,
+    scan_id: &str,
+    status: &str,
+    result_summary: Option<String>,
+    finished_at: Option<String>,
+) -> Result<(), String> {
+    let operation = store
+        .operations
+        .iter_mut()
+        .find(|operation| operation.id == operation_id)
+        .ok_or_else(|| "operation not found".to_string())?;
+
+    if let Some(job) = operation.scan_jobs.iter_mut().find(|job| job.id == scan_id) {
+        job.status = status.to_string();
+        job.result_summary = result_summary;
+        job.finished_at = finished_at;
+        operation.updated_at = now_timestamp();
+        Ok(())
+    } else {
+        Err("scan job not found".to_string())
+    }
+}
+
+fn run_nmap_scan(app: &AppHandle, input: RunScanInput) -> Result<ScanExecutionResult, String> {
+    if !has_command_in_path("nmap") {
+        return Err("nmap is not installed or not available in PATH".to_string());
+    }
+
+    let templates = scan_templates();
+    let template = templates
+        .iter()
+        .find(|template| template.id == input.profile_id)
+        .ok_or_else(|| "unknown scan template".to_string())?
+        .clone();
+
+    let target = input.target.trim().to_string();
+    if target.is_empty() {
+        return Err("scan target cannot be empty".to_string());
+    }
+
+    let custom_flags = input.custom_flags.unwrap_or_default();
+    let final_flags = if custom_flags.trim().is_empty() {
+        template.nmap_flags.clone()
+    } else {
+        custom_flags.trim().to_string()
+    };
+
+    let scan_id = next_id("scan");
+    let started_at = now_timestamp();
+    let start_instant = Instant::now();
+    let command_preview = format!("nmap {} -oX - {}", final_flags, target);
+
+    let mut store = load_operation_store(app)?;
+    let operation_exists = store
+        .operations
+        .iter()
+        .any(|operation| operation.id == input.operation_id);
+
+    if !operation_exists {
+        return Err("operation not found".to_string());
+    }
+
+    let queued_job = ScanJob {
+        id: scan_id.clone(),
+        target: target.clone(),
+        profile_id: template.id.clone(),
+        profile_name: template.name.clone(),
+        nmap_flags: final_flags.clone(),
+        status: "running".to_string(),
+        created_at: started_at.clone(),
+        result_summary: None,
+        finished_at: None,
+    };
+
+    {
+        let operation = store
+            .operations
+            .iter_mut()
+            .find(|operation| operation.id == input.operation_id)
+            .ok_or_else(|| "operation not found".to_string())?;
+        operation.scan_jobs.push(queued_job);
+        operation.updated_at = started_at.clone();
+    }
+
+    save_operation_store(app, &store)?;
+
+    let mut output = run_nmap_process(&final_flags, &target, false)?;
+
+    let stderr_first = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() && output_requires_root(&stderr_first) {
+        output = run_nmap_process(&final_flags, &target, true)?;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let duration_ms = start_instant.elapsed().as_millis();
+    let finished_at = now_timestamp();
+
+    let parse_source = extract_nmap_xml_payload(&stdout)
+        .or_else(|| extract_nmap_xml_payload(&stderr))
+        .ok_or_else(|| {
+            let stdout_excerpt = stdout.lines().take(6).collect::<Vec<_>>().join("\n");
+            let stderr_excerpt = stderr.lines().take(6).collect::<Vec<_>>().join("\n");
+
+            format!(
+                "nmap did not emit XML output. stdout:\n{}\nstderr:\n{}",
+                stdout_excerpt, stderr_excerpt
+            )
+        })?;
+
+    let (hosts, summary) = parse_nmap_xml(parse_source).map_err(|error| {
+        let stdout_excerpt = stdout.lines().take(6).collect::<Vec<_>>().join("\n");
+        let stderr_excerpt = stderr.lines().take(6).collect::<Vec<_>>().join("\n");
+
+        format!(
+            "{}\nstdout:\n{}\nstderr:\n{}",
+            error, stdout_excerpt, stderr_excerpt
+        )
+    })?;
+
+    let result_summary = format!(
+        "{} hosts up · {} hosts down · {} open ports",
+        summary.hosts_up, summary.hosts_down, summary.open_ports
+    );
+
+    let job_status = if output.status.success() { "completed" } else { "failed" };
+
+    let mut store = load_operation_store(app)?;
+    update_operation_scan_job(
+        &mut store,
+        &input.operation_id,
+        &scan_id,
+        job_status,
+        Some(result_summary.clone()),
+        Some(finished_at.clone()),
+    )?;
+    save_operation_store(app, &store)?;
+
+    if !output.status.success() && hosts.is_empty() {
+        return Err(format!("nmap exited with error: {}", stderr.trim()));
+    }
+
+    Ok(ScanExecutionResult {
+        scan_id,
+        operation_id: input.operation_id,
+        target,
+        profile_name: template.name,
+        command: command_preview,
+        started_at,
+        finished_at,
+        duration_ms,
+        summary,
+        hosts,
+        stdout,
+        stderr,
+    })
+}
+
+fn find_operation_mut<'a>(store: &'a mut OperationStore, operation_id: &str) -> Option<&'a mut Operation> {
+    store.operations.iter_mut().find(|operation| operation.id == operation_id)
+}
+
 #[tauri::command]
 fn get_scanner_status() -> Vec<ScannerStatus> {
     ["nmap", "masscan", "rustscan", "zmap"]
@@ -70,123 +570,145 @@ fn get_scanner_status() -> Vec<ScannerStatus> {
 }
 
 #[tauri::command]
-fn load_sample_topology() -> TopologySnapshot {
-    TopologySnapshot {
-        scan_id: "sample-lan-2026-04-05".to_string(),
-        generated_at: "2026-04-05T13:30:00Z".to_string(),
-        nodes: vec![
-            HostNode {
-                id: "gateway-01".to_string(),
-                ip: "192.168.1.1".to_string(),
-                label: "Edge Gateway".to_string(),
-                subnet: "192.168.1.0/24".to_string(),
-                os_family: "Linux".to_string(),
-                services: vec!["ssh".to_string(), "dns".to_string(), "dhcp".to_string()],
-                risk_score: 34,
-                x: 490.0,
-                y: 95.0,
-            },
-            HostNode {
-                id: "web-01".to_string(),
-                ip: "192.168.1.20".to_string(),
-                label: "Public Docs".to_string(),
-                subnet: "192.168.1.0/24".to_string(),
-                os_family: "Ubuntu".to_string(),
-                services: vec!["http".to_string(), "https".to_string(), "ssh".to_string()],
-                risk_score: 52,
-                x: 250.0,
-                y: 260.0,
-            },
-            HostNode {
-                id: "db-01".to_string(),
-                ip: "192.168.1.34".to_string(),
-                label: "Inventory DB".to_string(),
-                subnet: "192.168.1.0/24".to_string(),
-                os_family: "Debian".to_string(),
-                services: vec!["postgres".to_string(), "ssh".to_string()],
-                risk_score: 67,
-                x: 724.0,
-                y: 278.0,
-            },
-            HostNode {
-                id: "printer-01".to_string(),
-                ip: "192.168.1.50".to_string(),
-                label: "Office Printer".to_string(),
-                subnet: "192.168.1.0/24".to_string(),
-                os_family: "Embedded".to_string(),
-                services: vec!["ipp".to_string(), "http".to_string()],
-                risk_score: 71,
-                x: 170.0,
-                y: 454.0,
-            },
-            HostNode {
-                id: "cam-01".to_string(),
-                ip: "192.168.1.63".to_string(),
-                label: "Lobby Camera".to_string(),
-                subnet: "192.168.1.0/24".to_string(),
-                os_family: "Embedded".to_string(),
-                services: vec!["rtsp".to_string(), "http".to_string()],
-                risk_score: 76,
-                x: 518.0,
-                y: 470.0,
-            },
-            HostNode {
-                id: "devbox-01".to_string(),
-                ip: "192.168.1.89".to_string(),
-                label: "Developer Workstation".to_string(),
-                subnet: "192.168.1.0/24".to_string(),
-                os_family: "Windows".to_string(),
-                services: vec!["rdp".to_string(), "smb".to_string(), "ssh".to_string()],
-                risk_score: 44,
-                x: 840.0,
-                y: 458.0,
-            },
-        ],
-        edges: vec![
-            HostEdge {
-                source: "gateway-01".to_string(),
-                target: "web-01".to_string(),
-                relation: "route".to_string(),
-            },
-            HostEdge {
-                source: "gateway-01".to_string(),
-                target: "db-01".to_string(),
-                relation: "route".to_string(),
-            },
-            HostEdge {
-                source: "gateway-01".to_string(),
-                target: "printer-01".to_string(),
-                relation: "route".to_string(),
-            },
-            HostEdge {
-                source: "gateway-01".to_string(),
-                target: "cam-01".to_string(),
-                relation: "route".to_string(),
-            },
-            HostEdge {
-                source: "gateway-01".to_string(),
-                target: "devbox-01".to_string(),
-                relation: "route".to_string(),
-            },
-            HostEdge {
-                source: "web-01".to_string(),
-                target: "db-01".to_string(),
-                relation: "depends-on".to_string(),
-            },
-            HostEdge {
-                source: "devbox-01".to_string(),
-                target: "web-01".to_string(),
-                relation: "admin".to_string(),
-            },
-        ],
+fn list_scan_templates() -> Vec<ScanTemplate> {
+    scan_templates()
+}
+
+#[tauri::command]
+fn list_operations(app: AppHandle) -> Result<Vec<OperationSummary>, String> {
+    let store = load_operation_store(&app)?;
+
+    Ok(store
+        .operations
+        .iter()
+        .map(|operation| OperationSummary {
+            id: operation.id.clone(),
+            name: operation.name.clone(),
+            description: operation.description.clone(),
+            target_scope: operation.target_scope.clone(),
+            created_at: operation.created_at.clone(),
+            updated_at: operation.updated_at.clone(),
+            scan_count: operation.scan_jobs.len(),
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn create_operation(app: AppHandle, input: NewOperationInput) -> Result<Operation, String> {
+    let mut store = load_operation_store(&app)?;
+    let now = now_timestamp();
+
+    let operation = Operation {
+        id: next_id("op"),
+        name: input.name.trim().to_string(),
+        description: input.description.unwrap_or_default().trim().to_string(),
+        target_scope: input.target_scope.trim().to_string(),
+        created_at: now.clone(),
+        updated_at: now,
+        scan_jobs: Vec::new(),
+    };
+
+    if operation.name.is_empty() {
+        return Err("operation name cannot be empty".to_string());
     }
+
+    if operation.target_scope.is_empty() {
+        return Err("target scope cannot be empty".to_string());
+    }
+
+    store.operations.push(operation.clone());
+    save_operation_store(&app, &store)?;
+
+    Ok(operation)
+}
+
+#[tauri::command]
+fn get_operation(app: AppHandle, operation_id: String) -> Result<Operation, String> {
+    let store = load_operation_store(&app)?;
+
+    store
+        .operations
+        .into_iter()
+        .find(|operation| operation.id == operation_id)
+        .ok_or_else(|| "operation not found".to_string())
+}
+
+#[tauri::command]
+fn delete_operation(app: AppHandle, operation_id: String) -> Result<(), String> {
+    let mut store = load_operation_store(&app)?;
+    let before_len = store.operations.len();
+    store.operations.retain(|operation| operation.id != operation_id);
+
+    if before_len == store.operations.len() {
+        return Err("operation not found".to_string());
+    }
+
+    save_operation_store(&app, &store)
+}
+
+#[tauri::command]
+fn queue_scan_job(app: AppHandle, input: RunScanInput) -> Result<Operation, String> {
+    let mut store = load_operation_store(&app)?;
+    let templates = scan_templates();
+    let template = templates
+        .iter()
+        .find(|template| template.id == input.profile_id)
+        .ok_or_else(|| "unknown scan template".to_string())?;
+
+    let operation = find_operation_mut(&mut store, &input.operation_id)
+        .ok_or_else(|| "operation not found".to_string())?;
+
+    let target = input.target.trim().to_string();
+    if target.is_empty() {
+        return Err("scan target cannot be empty".to_string());
+    }
+
+    let custom_flags = input.custom_flags.unwrap_or_default();
+    let final_flags = if custom_flags.trim().is_empty() {
+        template.nmap_flags.clone()
+    } else {
+        custom_flags.trim().to_string()
+    };
+
+    operation.scan_jobs.push(ScanJob {
+        id: next_id("scan"),
+        target,
+        profile_id: template.id.clone(),
+        profile_name: template.name.clone(),
+        nmap_flags: final_flags,
+        status: "queued".to_string(),
+        created_at: now_timestamp(),
+        result_summary: None,
+        finished_at: None,
+    });
+
+    operation.updated_at = now_timestamp();
+    let updated_operation = operation.clone();
+
+    save_operation_store(&app, &store)?;
+
+    Ok(updated_operation)
+}
+
+#[tauri::command]
+fn run_scan(app: AppHandle, input: RunScanInput) -> Result<ScanExecutionResult, String> {
+    run_nmap_scan(&app, input)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_scanner_status, load_sample_topology])
+        .invoke_handler(tauri::generate_handler![
+            get_scanner_status,
+            list_scan_templates,
+            list_operations,
+            create_operation,
+            get_operation,
+            delete_operation,
+            queue_scan_job,
+            run_scan,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
