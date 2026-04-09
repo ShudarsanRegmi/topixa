@@ -581,6 +581,35 @@ label span {
   color: var(--text-soft);
 }
 
+.view-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.view-toggle-btn {
+  appearance: none;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: #182439;
+  color: var(--text);
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.view-toggle-btn:hover {
+  border-color: #5f7396;
+  background: #1e2b43;
+}
+
+.view-toggle-btn.active {
+  border-color: rgba(63, 140, 255, 0.8);
+  background: linear-gradient(145deg, rgba(63, 140, 255, 0.28), rgba(47, 117, 224, 0.2));
+  color: #eaf2ff;
+}
+
 .scan-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -604,6 +633,93 @@ label span {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+}
+
+.raw-card {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, #162234 0%, #141f30 100%);
+  padding: 8px;
+  display: flex;
+  overflow: hidden;
+}
+
+.raw-output-view {
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.raw-meta {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #111923;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.raw-meta-label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.raw-meta code {
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 12px;
+  color: #aad0ff;
+  overflow-wrap: anywhere;
+}
+
+.raw-blocks {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.raw-block {
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #111a28;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.raw-block header {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: #162233;
+}
+
+.raw-block pre {
+  margin: 0;
+  padding: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "IBM Plex Mono", "Consolas", monospace;
+  font-size: 12px;
+  color: #d9e8ff;
+  line-height: 1.45;
 }
 
 .graph-empty {
@@ -945,6 +1061,10 @@ label span {
   }
 
   .scan-config-row {
+    grid-template-columns: 1fr;
+  }
+
+  .raw-blocks {
     grid-template-columns: 1fr;
   }
 

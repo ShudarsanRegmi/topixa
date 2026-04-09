@@ -51,6 +51,8 @@ struct ScanExecutionResult {
     hosts: Vec<ScanHostResult>,
     stdout: String,
     stderr: String,
+    #[serde(default)]
+    xml_output: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -292,10 +294,10 @@ fn output_requires_root(stderr: &str) -> bool {
         || lowered.contains("you requested a scan type which requires root privileges")
 }
 
-fn run_nmap_process(flags: &str, target: &str, use_pkexec: bool) -> Result<Output, String> {
+fn run_nmap_process(flags: &str, target: &str, xml_output_path: &str, use_pkexec: bool) -> Result<Output, String> {
     let mut args = split_flags(flags);
     args.push("-oX".to_string());
-    args.push("-".to_string());
+    args.push(xml_output_path.to_string());
     args.push(target.to_string());
 
     let mut command = if use_pkexec {
@@ -489,7 +491,11 @@ fn run_nmap_scan(app: &AppHandle, input: RunScanInput) -> Result<ScanExecutionRe
     let scan_id = next_id("scan");
     let started_at = now_timestamp();
     let start_instant = Instant::now();
-    let command_preview = format!("nmap {} -oX - {}", final_flags, target);
+    let command_preview = format!("nmap {} {}", final_flags, target);
+    let xml_output_path = env::temp_dir()
+        .join(format!("topixa-{}-nmap.xml", scan_id))
+        .to_string_lossy()
+        .to_string();
 
     let mut store = load_operation_store(app)?;
     let operation_exists = store
@@ -526,11 +532,11 @@ fn run_nmap_scan(app: &AppHandle, input: RunScanInput) -> Result<ScanExecutionRe
 
     save_operation_store(app, &store)?;
 
-    let mut output = run_nmap_process(&final_flags, &target, false)?;
+    let mut output = run_nmap_process(&final_flags, &target, &xml_output_path, false)?;
 
     let stderr_first = String::from_utf8_lossy(&output.stderr).to_string();
     if !output.status.success() && output_requires_root(&stderr_first) {
-        output = run_nmap_process(&final_flags, &target, true)?;
+        output = run_nmap_process(&final_flags, &target, &xml_output_path, true)?;
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -538,9 +544,14 @@ fn run_nmap_scan(app: &AppHandle, input: RunScanInput) -> Result<ScanExecutionRe
     let duration_ms = start_instant.elapsed().as_millis();
     let finished_at = now_timestamp();
 
-    let parse_source = extract_nmap_xml_payload(&stdout)
-        .or_else(|| extract_nmap_xml_payload(&stderr))
-        .ok_or_else(|| {
+    let xml_raw = fs::read_to_string(&xml_output_path)
+        .or_else(|_| {
+            extract_nmap_xml_payload(&stdout)
+                .or_else(|| extract_nmap_xml_payload(&stderr))
+                .map(|xml| xml.to_string())
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "xml payload not found"))
+        })
+        .map_err(|_| {
             let stdout_excerpt = stdout.lines().take(6).collect::<Vec<_>>().join("\n");
             let stderr_excerpt = stderr.lines().take(6).collect::<Vec<_>>().join("\n");
 
@@ -550,7 +561,10 @@ fn run_nmap_scan(app: &AppHandle, input: RunScanInput) -> Result<ScanExecutionRe
             )
         })?;
 
-    let (hosts, summary) = parse_nmap_xml(parse_source).map_err(|error| {
+    // Best-effort cleanup of temporary XML file used for parsing.
+    let _ = fs::remove_file(&xml_output_path);
+
+    let (hosts, summary) = parse_nmap_xml(&xml_raw).map_err(|error| {
         let stdout_excerpt = stdout.lines().take(6).collect::<Vec<_>>().join("\n");
         let stderr_excerpt = stderr.lines().take(6).collect::<Vec<_>>().join("\n");
 
@@ -594,6 +608,7 @@ fn run_nmap_scan(app: &AppHandle, input: RunScanInput) -> Result<ScanExecutionRe
         hosts,
         stdout,
         stderr,
+        xml_output: xml_raw,
     };
 
     // Persist full scan payload. Do not swallow failures, otherwise reopening an operation cannot render graph data.

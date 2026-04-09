@@ -77,6 +77,7 @@ type ScanExecutionResult = {
   hosts: ScanHostResult[];
   stdout: string;
   stderr: string;
+  xml_output?: string;
 };
 
 type AppMode = "launcher" | "workspace";
@@ -188,6 +189,7 @@ function Icon({ name }: { name: "panelOpen" | "panelClose" | "plus" | "close" | 
 }
 
 function App() {
+  const [scanViewMode, setScanViewMode] = useState<"graph" | "raw" | "xml">("graph");
   const [mode, setMode] = useState<AppMode>("launcher");
   const [operations, setOperations] = useState<OperationSummary[]>([]);
   const [templates, setTemplates] = useState<ScanTemplate[]>([]);
@@ -251,6 +253,11 @@ function App() {
     const jobs = activeOperation?.scan_jobs ?? [];
     return [...jobs].sort((a, b) => toTimestampMillis(a.created_at) - toTimestampMillis(b.created_at));
   }, [activeOperation]);
+
+  const activeScanJob = useMemo(
+    () => operationJobs.find((job) => job.id === activeScanJobId) ?? null,
+    [operationJobs, activeScanJobId],
+  );
 
   const activeScanResult = activeScanJobId ? scanResultsByJobId[activeScanJobId] ?? null : null;
   const activeScanLoadState = activeScanJobId ? scanLoadStateByJobId[activeScanJobId] ?? "idle" : "idle";
@@ -654,6 +661,123 @@ function App() {
     );
   }
 
+  function renderRawOutput() {
+    if (!activeScanResult) {
+      if (activeScanJob && activeScanJob.status !== "completed") {
+        return (
+          <div className="graph-empty">
+            <strong>Raw output is unavailable for this scan.</strong>
+            <p>The selected scan is currently {activeScanJob.status}. Open a completed scan tab to inspect stdout and stderr.</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="graph-empty">
+          <strong>No scan selected.</strong>
+          <p>Select a completed scan tab to view raw output.</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="raw-output-view">
+        <div className="raw-meta">
+          <div className="raw-meta-label">Command</div>
+          <code>{activeScanResult.command}</code>
+          <div className="muted-line">
+            Started {formatStamp(activeScanResult.started_at)} · Finished {formatStamp(activeScanResult.finished_at)} · {activeScanResult.duration_ms} ms
+          </div>
+        </div>
+
+        <div className="raw-blocks">
+          <section className="raw-block">
+            <header>stdout</header>
+            <pre>{activeScanResult.stdout?.trim() || "No stdout output captured."}</pre>
+          </section>
+
+          <section className="raw-block">
+            <header>stderr</header>
+            <pre>{activeScanResult.stderr?.trim() || "No stderr output captured."}</pre>
+          </section>
+        </div>
+      </div>
+    );
+  }
+
+  function renderXmlOutput() {
+    if (!activeScanResult) {
+      if (activeScanJob && activeScanJob.status !== "completed") {
+        return (
+          <div className="graph-empty">
+            <strong>XML payload is unavailable for this scan.</strong>
+            <p>The selected scan is currently {activeScanJob.status}. Open a completed scan tab to inspect XML output.</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="graph-empty">
+          <strong>No scan selected.</strong>
+          <p>Select a completed scan tab to view XML output.</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="raw-output-view">
+        <section className="raw-block">
+          <header>xml payload</header>
+          <pre>{activeScanResult.xml_output?.trim() || "No XML payload captured."}</pre>
+        </section>
+      </div>
+    );
+  }
+
+  function renderActiveScanPanel() {
+    const selectedCompleted = activeScanJobId && activeScanJob?.status === "completed";
+
+    if (selectedCompleted && !activeScanResult && activeScanLoadState === "loading") {
+      return (
+        <div className="graph-empty">
+          <strong>Loading scan data…</strong>
+          <p>Fetching the saved result for this scan.</p>
+        </div>
+      );
+    }
+
+    if (selectedCompleted && !activeScanResult && activeScanLoadState === "failed") {
+      return (
+        <div className="graph-empty">
+          <strong>Saved payload missing for this scan tab.</strong>
+          <p>This usually happens on legacy scans created before payload persistence. Select another tab or run a new scan.</p>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => {
+              if (!activeScanJobId) {
+                return;
+              }
+              setScanLoadStateByJobId((current) => ({ ...current, [activeScanJobId]: "idle" }));
+            }}
+          >
+            Retry Load
+          </button>
+        </div>
+      );
+    }
+
+    if (scanViewMode === "raw") {
+      return renderRawOutput();
+    }
+
+    if (scanViewMode === "xml") {
+      return renderXmlOutput();
+    }
+
+    return renderGraph();
+  }
+
   function renderWorkspace() {
     const workspaceClass = [
       "workspace-frame",
@@ -775,8 +899,33 @@ function App() {
 
           <section className="center-panel">
             <div className="center-subtitle">
-              <span>Workspace · Graph View</span>
-              <span>{activeOperation?.name || "Open an operation"}</span>
+              <span>
+                Workspace · {scanViewMode === "graph" ? "Graph View" : scanViewMode === "raw" ? "Raw Output" : "XML Output"}
+              </span>
+              <div className="view-controls">
+                <button
+                  type="button"
+                  className={scanViewMode === "graph" ? "view-toggle-btn active" : "view-toggle-btn"}
+                  onClick={() => setScanViewMode("graph")}
+                >
+                  Graph
+                </button>
+                <button
+                  type="button"
+                  className={scanViewMode === "raw" ? "view-toggle-btn active" : "view-toggle-btn"}
+                  onClick={() => setScanViewMode("raw")}
+                >
+                  Raw Output
+                </button>
+                <button
+                  type="button"
+                  className={scanViewMode === "xml" ? "view-toggle-btn active" : "view-toggle-btn"}
+                  onClick={() => setScanViewMode("xml")}
+                >
+                  XML
+                </button>
+                <span>{activeOperation?.name || "Open an operation"}</span>
+              </div>
             </div>
 
             <div className="scan-tabs" aria-label="Scan tabs">
@@ -805,38 +954,8 @@ function App() {
               )}
             </div>
 
-            <div className="graph-card">
-              {activeScanJobId &&
-              !activeScanResult &&
-              operationJobs.some((job) => job.id === activeScanJobId && job.status === "completed") &&
-              activeScanLoadState === "loading" ? (
-                <div className="graph-empty">
-                  <strong>Loading scan graph…</strong>
-                  <p>Fetching the saved result for this scan.</p>
-                </div>
-              ) : activeScanJobId &&
-                !activeScanResult &&
-                operationJobs.some((job) => job.id === activeScanJobId && job.status === "completed") &&
-                activeScanLoadState === "failed" ? (
-                <div className="graph-empty">
-                  <strong>Saved payload missing for this scan tab.</strong>
-                  <p>This usually happens on legacy scans created before payload persistence. Select another tab or run a new scan.</p>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => {
-                      if (!activeScanJobId) {
-                        return;
-                      }
-                      setScanLoadStateByJobId((current) => ({ ...current, [activeScanJobId]: "idle" }));
-                    }}
-                  >
-                    Retry Load
-                  </button>
-                </div>
-              ) : (
-                renderGraph()
-              )}
+            <div className={scanViewMode === "graph" ? "graph-card" : "raw-card"}>
+              {renderActiveScanPanel()}
             </div>
           </section>
 
