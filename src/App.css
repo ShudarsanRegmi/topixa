@@ -169,75 +169,175 @@ label span {
   min-height: 0;
   border-radius: var(--radius-xl);
   border: 1px solid var(--line);
-  background: linear-gradient(145deg, rgba(26, 35, 50, 0.93), rgba(16, 23, 34, 0.94));
+  background: radial-gradient(circle at 8% 12%, rgba(63, 140, 255, 0.16), transparent 36%),
+    linear-gradient(145deg, rgba(26, 35, 50, 0.95), rgba(16, 23, 34, 0.96));
   box-shadow: var(--shadow-lg);
-  padding: 16px;
+  padding: 18px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 14px;
+  gap: 16px;
 }
 
 .launcher-center {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  gap: 12px;
+  gap: 14px;
+  border: 1px solid rgba(63, 140, 255, 0.25);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(160deg, rgba(31, 44, 65, 0.72), rgba(21, 30, 44, 0.58));
+  padding: 18px;
+}
+
+.launcher-brand-row {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .launcher-logo {
   width: 128px;
-  height: 128px;
-  border-radius: 50%;
+  height: 72px;
+  border-radius: 20px;
   border: 1px solid rgba(63, 140, 255, 0.5);
-  background: radial-gradient(circle at 30% 30%, rgba(63, 140, 255, 0.35), rgba(63, 140, 255, 0.05));
+  background: radial-gradient(circle at 20% 20%, rgba(63, 140, 255, 0.36), rgba(63, 140, 255, 0.08));
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 0 7px rgba(63, 140, 255, 0.1);
+  box-shadow: 0 0 0 6px rgba(63, 140, 255, 0.09);
 }
 
 .launcher-logo strong {
-  font-size: 30px;
+  font-size: 26px;
   letter-spacing: 0.04em;
   font-weight: 700;
   color: #f2f7ff;
 }
 
 .launcher-logo span {
-  font-size: 12px;
+  font-size: 11px;
   color: #c8d6ee;
   letter-spacing: 0.08em;
 }
 
+.launcher-brand-tag {
+  border: 1px solid rgba(148, 176, 228, 0.35);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #c6d7f4;
+  background: rgba(26, 41, 62, 0.75);
+}
+
+.launcher-title {
+  margin: 0;
+  font-size: 34px;
+  line-height: 1.04;
+  letter-spacing: 0.01em;
+  color: #f4f8ff;
+}
+
+.launcher-subtitle {
+  margin: 0;
+  max-width: 620px;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.launcher-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.launcher-stat-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, #1f2c41, #1a2435);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.launcher-stat-card strong {
+  font-size: 19px;
+  color: #ecf4ff;
+}
+
+.launcher-stat-card span {
+  font-size: 11px;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.launcher-action-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .launcher-new-button {
-  width: 92px;
-  height: 92px;
+  min-height: 50px;
+  min-width: 220px;
   border: 1px solid rgba(63, 140, 255, 0.7);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   background: linear-gradient(145deg, rgba(63, 140, 255, 0.95), rgba(47, 117, 224, 0.94));
   color: #fff;
-  font-size: 62px;
-  line-height: 1;
-  display: grid;
-  place-items: center;
+  font-size: 15px;
+  line-height: 1.1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   transition: transform 0.14s ease, box-shadow 0.14s ease;
   box-shadow: 0 10px 22px rgba(18, 53, 103, 0.45);
+}
+
+.launcher-new-button span {
+  font-size: 26px;
+  line-height: 1;
+}
+
+.launcher-new-button strong {
+  font-size: 14px;
 }
 
 .launcher-new-button:hover {
   transform: translateY(-1px);
 }
 
-.launcher-new-label {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-soft);
+.launcher-manage-button {
+  min-height: 50px;
 }
 
-.launcher-manage-button {
-  margin-top: 2px;
+.launcher-recent {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, rgba(29, 40, 59, 0.86), rgba(24, 34, 50, 0.9));
+  padding: 12px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.launcher-recent-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .launcher-recent h3 {
@@ -245,6 +345,11 @@ label span {
   font-size: 17px;
   font-weight: 600;
   color: #f1f6ff;
+}
+
+.launcher-recent-header span {
+  font-size: 12px;
+  color: #b5c9ea;
 }
 
 .launcher-list {
@@ -259,9 +364,9 @@ label span {
 
 .recent-row {
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: linear-gradient(180deg, #1d2738, #182232);
-  padding: 9px 10px;
+  padding: 10px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1305,6 +1410,24 @@ label span {
 
   .launcher-frame {
     padding: 12px;
+  }
+
+  .launcher-title {
+    font-size: 27px;
+  }
+
+  .launcher-stat-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .launcher-action-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .launcher-new-button,
+  .launcher-manage-button {
+    width: 100%;
   }
 
   .workspace-ribbon {

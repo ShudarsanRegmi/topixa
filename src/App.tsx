@@ -1008,30 +1008,63 @@ function App() {
   }, [activeOperation, activeScanJobId, activeScanLoadState, scanLoadStateByJobId, scanResultsByJobId]);
 
   function renderLauncher() {
+    const sortedOperations = [...operations].sort((a, b) => toTimestampMillis(b.updated_at) - toTimestampMillis(a.updated_at));
+    const totalScans = operations.reduce((sum, operation) => sum + operation.scan_count, 0);
+    const uniqueScopes = new Set(operations.map((operation) => operation.target_scope).filter(Boolean)).size;
+
     return (
       <section className="launcher-view">
         <div className="launcher-frame">
           <div className="launcher-center">
-            <div className="launcher-logo">
-              <strong>TX</strong>
-              <span>Topixa</span>
+            <div className="launcher-brand-row">
+              <div className="launcher-logo">
+                <strong>TX</strong>
+                <span>Topixa</span>
+              </div>
+              <div className="launcher-brand-tag">Network Recon Workspace</div>
             </div>
-            <button type="button" className="launcher-new-button" onClick={() => setShowCreateDialog(true)}>
-              +
-            </button>
-            <div className="launcher-new-label">Create New Operation</div>
-            <button type="button" className="secondary launcher-manage-button" onClick={() => setShowManageDialog(true)}>
-              Manage Operations
-            </button>
+
+            <h1 className="launcher-title">Contained. Fast. Operable.</h1>
+            <p className="launcher-subtitle">
+              Organize operations, queue scans, inspect topology, and review raw scanner output in one focused command surface.
+            </p>
+
+            <div className="launcher-stat-grid">
+              <div className="launcher-stat-card">
+                <strong>{operations.length}</strong>
+                <span>Operations</span>
+              </div>
+              <div className="launcher-stat-card">
+                <strong>{totalScans}</strong>
+                <span>Total Scans</span>
+              </div>
+              <div className="launcher-stat-card">
+                <strong>{uniqueScopes}</strong>
+                <span>Target Scopes</span>
+              </div>
+            </div>
+
+            <div className="launcher-action-row">
+              <button type="button" className="launcher-new-button" onClick={() => setShowCreateDialog(true)}>
+                <span>+</span>
+                <strong>Create Operation</strong>
+              </button>
+              <button type="button" className="secondary launcher-manage-button" onClick={() => setShowManageDialog(true)}>
+                Manage Operations
+              </button>
+            </div>
           </div>
 
           <aside className="launcher-recent">
-            <h3>Recent Operations</h3>
+            <div className="launcher-recent-header">
+              <h3>Recent Operations</h3>
+              <span>{sortedOperations.length}</span>
+            </div>
             <div className="launcher-list">
-              {operations.length === 0 ? (
+              {sortedOperations.length === 0 ? (
                 <div className="empty-state">No operations yet.</div>
               ) : (
-                operations.map((operation) => (
+                sortedOperations.slice(0, 10).map((operation) => (
                   <div className="recent-row" key={operation.id}>
                     <div>
                       <strong>{operation.name}</strong>
@@ -1383,6 +1416,16 @@ function App() {
               </button>
               {ribbonMenu === "file" ? (
                 <div className="ribbon-submenu">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("launcher");
+                      setSelectedHostAddress(null);
+                      setRibbonMenu(null);
+                    }}
+                  >
+                    Back to Main Page
+                  </button>
                   <button type="button" onClick={() => { setShowCreateDialog(true); setRibbonMenu(null); }}>New Operation</button>
                   <button type="button" onClick={() => { setMode("launcher"); setSelectedHostAddress(null); setRibbonMenu(null); }}>Open Operations</button>
                   <button type="button" onClick={() => { refreshBootstrapData(); setRibbonMenu(null); }}>Refresh Data</button>
