@@ -17,11 +17,11 @@
   --good: #3ed08f;
   --warn: #f5b24a;
   --bad: #ff6f7d;
-  --radius-xs: 8px;
-  --radius-sm: 12px;
-  --radius-md: 16px;
-  --radius-lg: 20px;
-  --radius-xl: 24px;
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 22px;
   --shadow-lg: 0 12px 30px rgba(0, 0, 0, 0.33);
   --shadow-md: 0 8px 22px rgba(0, 0, 0, 0.28);
 
@@ -103,8 +103,8 @@ label span {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px;
+  gap: 4px;
+  padding: 4px;
   background: transparent;
 }
 
@@ -127,7 +127,7 @@ label span {
   border: 1px solid rgba(255, 180, 186, 0.45);
   background: rgba(255, 154, 165, 0.12);
   color: #ffdbe0;
-  border-radius: 10px;
+  border-radius: 8px;
   width: 28px;
   height: 28px;
   display: inline-flex;
@@ -154,10 +154,10 @@ label span {
   border: 1px solid var(--line);
   background: linear-gradient(145deg, rgba(26, 35, 50, 0.93), rgba(16, 23, 34, 0.94));
   box-shadow: var(--shadow-lg);
-  padding: 34px;
+  padding: 16px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
-  gap: 30px;
+  gap: 14px;
 }
 
 .launcher-center {
@@ -165,7 +165,7 @@ label span {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 18px;
+  gap: 12px;
 }
 
 .launcher-logo {
@@ -227,10 +227,10 @@ label span {
 }
 
 .launcher-list {
-  margin-top: 14px;
+  margin-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   max-height: 100%;
   overflow: auto;
   padding-right: 4px;
@@ -240,11 +240,11 @@ label span {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: linear-gradient(180deg, #1d2738, #182232);
-  padding: 11px 12px;
+  padding: 9px 10px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .recent-row strong {
@@ -307,7 +307,7 @@ label span {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
 }
 
 .workspace-ribbon {
@@ -315,16 +315,16 @@ label span {
   border: 1px solid var(--line);
   background: linear-gradient(180deg, #1c2638, #182233);
   box-shadow: var(--shadow-md);
-  padding: 8px 12px;
+  padding: 6px 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .ribbon-menu-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
 }
 
@@ -406,7 +406,7 @@ label span {
   min-height: 0;
   display: grid;
   grid-template-columns: 244px minmax(0, 1fr) 0;
-  gap: 12px;
+  gap: 6px;
   transition: grid-template-columns 0.22s ease;
 }
 
@@ -428,7 +428,7 @@ label span {
   border: 1px solid var(--line);
   background: linear-gradient(180deg, #1a2435, #162131);
   box-shadow: var(--shadow-md);
-  padding: 12px;
+  padding: 10px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -440,7 +440,7 @@ label span {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .icon-btn {
@@ -482,7 +482,7 @@ label span {
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   padding-right: 2px;
 }
 
@@ -491,7 +491,8 @@ label span {
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
+  padding: 8px 10px;
 }
 
 .scan-item.active,
@@ -563,7 +564,7 @@ label span {
 }
 
 .center-panel {
-  gap: 10px;
+  gap: 8px;
 }
 
 .center-subtitle {
@@ -579,7 +580,7 @@ label span {
 .scan-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .scan-tab {
@@ -594,7 +595,7 @@ label span {
   border-radius: var(--radius-lg);
   background: radial-gradient(circle at 50% 0%, rgba(63, 140, 255, 0.12), transparent 40%),
     linear-gradient(180deg, #162234 0%, #141f30 100%);
-  padding: 8px;
+  padding: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -697,7 +698,7 @@ label span {
   overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   padding-right: 2px;
 }
 
@@ -705,10 +706,10 @@ label span {
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   background: linear-gradient(180deg, #25324a, #202b3f);
-  padding: 12px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
 }
 
 .host-detail-summary strong {
@@ -719,14 +720,14 @@ label span {
 .host-port-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .host-port-item {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: #1a2537;
-  padding: 10px 12px;
+  padding: 8px 10px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -748,10 +749,10 @@ label span {
   border-radius: var(--radius-lg);
   border: 1px solid var(--line-strong);
   background: linear-gradient(180deg, #1d283b, #172132);
-  padding: 18px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   box-shadow: var(--shadow-lg);
 }
 
@@ -772,10 +773,10 @@ label span {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: #1a2638;
-  padding: 12px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .help-block h4 {
@@ -826,13 +827,13 @@ label span {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
 .empty-state {
   border: 1px dashed var(--line-strong);
   border-radius: var(--radius-sm);
-  padding: 14px;
+  padding: 10px;
   background: rgba(20, 27, 39, 0.7);
   color: var(--text-soft);
   font-size: 12px;
@@ -882,7 +883,7 @@ label span {
   }
 
   .launcher-frame {
-    padding: 20px;
+    padding: 12px;
   }
 
   .workspace-ribbon {
