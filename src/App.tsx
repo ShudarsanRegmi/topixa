@@ -529,7 +529,20 @@ function App() {
   const [flowEdges, setFlowEdges, onFlowEdgesChange] = useEdgesState([]);
 
   useEffect(() => {
-    setFlowNodes(flowGraph.nodes);
+    setFlowNodes((previous) =>
+      flowGraph.nodes.map((nextNode) => {
+        const existing = previous.find((node) => node.id === nextNode.id);
+        if (!existing) {
+          return nextNode;
+        }
+
+        // Keep user-moved coordinates when node identity remains stable.
+        return {
+          ...nextNode,
+          position: existing.position,
+        };
+      }),
+    );
     setFlowEdges(flowGraph.edges);
   }, [flowGraph, setFlowEdges, setFlowNodes]);
 
