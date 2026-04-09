@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ReactFlow, { Background, Controls, MiniMap, MarkerType, type Edge, type Node } from "reactflow";
+import "reactflow/dist/style.css";
 import "./App.css";
 
 type ScanTemplate = {
@@ -78,6 +80,10 @@ type ScanExecutionResult = {
   stdout: string;
   stderr: string;
   xml_output?: string;
+};
+
+type FlowNodeData = {
+  label: ReactNode;
 };
 
 type AppMode = "launcher" | "workspace";
@@ -212,6 +218,7 @@ function App() {
   const [showHelpDialog, setShowHelpDialog] = useState(false);
   const [ribbonMenu, setRibbonMenu] = useState<RibbonMenu>(null);
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(true);
+  const [graphExpanded, setGraphExpanded] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -277,32 +284,91 @@ function App() {
 
     const flags = customFlags.trim() || selectedTemplate.nmap_flags;
     const target = scanTarget.trim() || activeOperation?.target_scope || "<target>";
-    return `nmap ${flags} -oX - ${target}`;
+    return `nmap ${flags} ${target}`;
   }, [selectedTemplate, customFlags, scanTarget, activeOperation]);
 
-  const graphNodes = useMemo(() => {
+  const flowGraph = useMemo(() => {
+    if (!activeScanResult) {
+      return { nodes: [] as Node<FlowNodeData>[], edges: [] as Edge[] };
+    }
+
     const hosts = activeScanResult?.hosts ?? [];
-    const centerX = 360;
-    const centerY = 215;
-    const radius = hosts.length <= 1 ? 0 : Math.min(170, 110 + hosts.length * 12);
+    const radius = hosts.length <= 1 ? 0 : Math.min(260, 130 + hosts.length * 18);
 
-    return hosts.map((host, index) => {
-      if (hosts.length === 1) {
-        return {
-          host,
-          x: centerX,
-          y: 105,
-        };
-      }
+    const nodes: Node<FlowNodeData>[] = [
+      {
+        id: "__target__",
+        position: { x: 0, y: 0 },
+        data: {
+          label: (
+            <div className="flow-node-content">
+              <strong>{activeScanResult.target}</strong>
+              <span>{activeScanResult.summary.hosts_up} up · {activeScanResult.summary.open_ports} open</span>
+            </div>
+          ),
+        },
+        draggable: true,
+        style: {
+          width: 190,
+          borderRadius: 14,
+          border: "1px solid rgba(121, 166, 255, 0.65)",
+          background: "linear-gradient(180deg, #2b4268, #223754)",
+          color: "#ecf3ff",
+          padding: "8px 10px",
+          boxShadow: "0 8px 22px rgba(13, 32, 56, 0.45)",
+        },
+      },
+    ];
 
-      const angle = (index / hosts.length) * Math.PI * 2 - Math.PI / 2;
-      return {
-        host,
-        x: centerX + radius * Math.cos(angle),
-        y: centerY + radius * Math.sin(angle),
-      };
+    const edges: Edge[] = [];
+
+    hosts.forEach((host, index) => {
+      const angle = hosts.length <= 1 ? -Math.PI / 2 : (index / hosts.length) * Math.PI * 2 - Math.PI / 2;
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      const isSelected = selectedHostAddress === host.address;
+      const openPorts = host.ports.filter((port) => port.state === "open").length;
+
+      nodes.push({
+        id: host.address,
+        position: { x, y },
+        data: {
+          label: (
+            <div className="flow-node-content">
+              <strong>{host.hostname || host.address}</strong>
+              <span>{openPorts} open · {host.state}</span>
+            </div>
+          ),
+        },
+        draggable: true,
+        style: {
+          width: 170,
+          borderRadius: 12,
+          border: isSelected ? "1px solid #79a6ff" : "1px solid #4f6484",
+          background: isSelected ? "linear-gradient(180deg, #324e7a, #2a4468)" : "linear-gradient(180deg, #263a5a, #22344d)",
+          color: "#ecf3ff",
+          padding: "8px 10px",
+        },
+      });
+
+      edges.push({
+        id: `edge-${host.address}`,
+        source: "__target__",
+        target: host.address,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "#6788bc" },
+        style: { stroke: "#6788bc", strokeWidth: isSelected ? 2.3 : 1.5 },
+        animated: isSelected,
+      });
     });
-  }, [activeScanResult]);
+
+    return { nodes, edges };
+  }, [activeScanResult, selectedHostAddress]);
+
+  useEffect(() => {
+    if (scanViewMode !== "graph" || !activeScanResult) {
+      setGraphExpanded(false);
+    }
+  }, [scanViewMode, activeScanResult]);
 
   async function refreshOperations() {
     const operationResult = await invoke<OperationSummary[]>("list_operations");
@@ -596,6 +662,58 @@ function App() {
     );
   }
 
+  function renderGraphCanvas(expanded: boolean) {
+    if (!activeScanResult) {
+      return null;
+    }
+
+    return (
+      <div className={expanded ? "flow-shell expanded" : "flow-shell"}>
+        <div className="flow-toolbar">
+          <span>Drag nodes, use mouse wheel/pinch to zoom, and drag the canvas to pan.</span>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setGraphExpanded((current) => !current)}
+          >
+            {expanded ? "Exit Expanded View" : "Expand Graph"}
+          </button>
+        </div>
+
+        <div className="flow-canvas">
+          <ReactFlow
+            nodes={flowGraph.nodes}
+            edges={flowGraph.edges}
+            onNodeClick={(_, node) => {
+              if (node.id === "__target__") {
+                setSelectedHostAddress(null);
+                return;
+              }
+
+              setSelectedHostAddress(node.id);
+            }}
+            fitView
+            fitViewOptions={{ padding: 0.22 }}
+            minZoom={0.2}
+            maxZoom={2.5}
+            nodesConnectable={false}
+            proOptions={{ hideAttribution: true }}
+          >
+            <MiniMap
+              pannable
+              zoomable
+              nodeBorderRadius={6}
+              maskColor="rgba(6, 9, 14, 0.52)"
+              nodeColor={(node) => (node.id === "__target__" ? "#3f8cff" : "#4f6484")}
+            />
+            <Controls position="bottom-right" showInteractive />
+            <Background color="#2d3d57" gap={18} size={1} />
+          </ReactFlow>
+        </div>
+      </div>
+    );
+  }
+
   function renderGraph() {
     if (!activeScanResult) {
       return (
@@ -617,48 +735,7 @@ function App() {
       );
     }
 
-    return (
-      <svg viewBox="0 0 720 430" className="host-graph" role="img" aria-label="Host graph visualization">
-        <circle className="graph-center" cx="360" cy="215" r="34" />
-        <text className="graph-center-label" x="360" y="212">
-          {activeScanResult.target}
-        </text>
-        <text className="graph-center-sub" x="360" y="230">
-          {activeScanResult.summary.hosts_up} up · {activeScanResult.summary.open_ports} open
-        </text>
-
-        {graphNodes.map(({ host, x, y }) => {
-          const isSelected = selectedHostAddress === host.address;
-          const openPorts = host.ports.filter((port) => port.state === "open").length;
-          const hostLabel = host.hostname || host.address;
-
-          return (
-            <g
-              key={host.address}
-              className="host-node"
-              onClick={() => setSelectedHostAddress(host.address)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  setSelectedHostAddress(host.address);
-                }
-              }}
-            >
-              <line x1="360" y1="215" x2={x} y2={y} className="graph-link" />
-              <circle className={isSelected ? "graph-host active" : "graph-host"} cx={x} cy={y} r="34" />
-              <text className="graph-host-label" x={x} y={y - 2}>
-                {hostLabel}
-              </text>
-              <text className="graph-host-sub" x={x} y={y + 13}>
-                {openPorts} open ports
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-    );
+    return renderGraphCanvas(false);
   }
 
   function renderRawOutput() {
@@ -1004,6 +1081,14 @@ function App() {
             ) : null}
           </aside>
         </div>
+
+        {graphExpanded && scanViewMode === "graph" && activeScanResult ? (
+          <div className="graph-overlay" role="dialog" aria-modal="true">
+            <div className="graph-overlay-panel">
+              {renderGraphCanvas(true)}
+            </div>
+          </div>
+        ) : null}
 
         {showScanConfigDialog ? (
           <div className="create-modal-overlay" role="dialog" aria-modal="true">

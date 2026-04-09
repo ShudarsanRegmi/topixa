@@ -630,9 +630,111 @@ label span {
     linear-gradient(180deg, #162234 0%, #141f30 100%);
   padding: 6px;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: stretch;
   overflow: hidden;
+}
+
+.flow-shell {
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.flow-shell.expanded {
+  height: 100%;
+}
+
+.flow-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.flow-canvas {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #121c2b;
+  overflow: hidden;
+}
+
+.flow-canvas .react-flow {
+  background: radial-gradient(circle at 30% 20%, rgba(63, 140, 255, 0.08), transparent 45%), #121c2b;
+}
+
+.flow-canvas .react-flow__node {
+  cursor: grab;
+  box-shadow: none;
+}
+
+.flow-canvas .react-flow__node:active {
+  cursor: grabbing;
+}
+
+.flow-node-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1.25;
+}
+
+.flow-node-content strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.flow-node-content span {
+  font-size: 10px;
+  color: #b6c8e7;
+}
+
+.flow-canvas .react-flow__controls {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+}
+
+.flow-canvas .react-flow__controls-button {
+  background: #18263a;
+  color: #d8e6ff;
+  border-bottom: 1px solid var(--line);
+}
+
+.flow-canvas .react-flow__controls-button:hover {
+  background: #20314a;
+}
+
+.flow-canvas .react-flow__minimap {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: rgba(12, 18, 28, 0.78);
+}
+
+.graph-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgba(6, 9, 14, 0.8);
+  backdrop-filter: blur(4px);
+  padding: 14px;
+}
+
+.graph-overlay-panel {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, #162234 0%, #141f30 100%);
+  padding: 10px;
+  box-shadow: var(--shadow-lg);
 }
 
 .raw-card {
@@ -1062,6 +1164,11 @@ label span {
 
   .scan-config-row {
     grid-template-columns: 1fr;
+  }
+
+  .flow-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .raw-blocks {
