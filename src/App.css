@@ -24,6 +24,7 @@
   --radius-xl: 22px;
   --shadow-lg: 0 12px 30px rgba(0, 0, 0, 0.33);
   --shadow-md: 0 8px 22px rgba(0, 0, 0, 0.28);
+  color-scheme: dark;
 
   font-family: "Space Grotesk", "Trebuchet MS", "Segoe UI", sans-serif;
   color: var(--text);
@@ -74,6 +75,22 @@ textarea {
   padding: 11px 12px;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 34px;
+  background-image: linear-gradient(45deg, transparent 50%, #9fb4d8 50%), linear-gradient(135deg, #9fb4d8 50%, transparent 50%);
+  background-position: calc(100% - 16px) calc(50% + 1px), calc(100% - 11px) calc(50% + 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+select option {
+  background: #121a26;
+  color: var(--text);
 }
 
 input:focus,
@@ -685,9 +702,7 @@ label span {
 
 .flow-filter-item input,
 .flow-filter-item select {
-  padding: 7px 8px;
   border-radius: var(--radius-xs);
-  font-size: 12px;
 }
 
 .flow-filter-item.wide {
