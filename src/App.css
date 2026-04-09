@@ -649,12 +649,49 @@ label span {
 
 .flow-toolbar {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
   padding: 0 2px;
   color: var(--text-soft);
   font-size: 12px;
+}
+
+.flow-toolbar-info {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.flow-filter-row {
+  display: grid;
+  grid-template-columns: 92px 132px minmax(180px, 1fr) minmax(180px, 1fr) 120px auto auto;
+  gap: 6px;
+  align-items: end;
+}
+
+.flow-filter-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.flow-filter-item span {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.flow-filter-item input,
+.flow-filter-item select {
+  padding: 7px 8px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+}
+
+.flow-filter-item.wide {
+  min-width: 0;
 }
 
 .flow-canvas {
@@ -684,6 +721,44 @@ label span {
   flex-direction: column;
   gap: 3px;
   line-height: 1.25;
+}
+
+.flow-node-content.circle {
+  align-items: center;
+  justify-content: center;
+}
+
+.flow-node-content.circle strong {
+  font-size: 11px;
+  max-width: 88px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.flow-node-content.circle span {
+  font-size: 9px;
+}
+
+.flow-node-content.dot {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flow-node-dot-core {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #95b8ef;
+  box-shadow: 0 0 0 2px rgba(149, 184, 239, 0.2);
+}
+
+.flow-node-dot-core.active {
+  background: #d7e7ff;
+  box-shadow: 0 0 0 3px rgba(121, 166, 255, 0.35);
 }
 
 .flow-node-content strong {
@@ -735,6 +810,36 @@ label span {
   background: linear-gradient(180deg, #162234 0%, #141f30 100%);
   padding: 10px;
   box-shadow: var(--shadow-lg);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.graph-overlay-panel.host-open {
+  grid-template-columns: minmax(0, 1fr) 310px;
+}
+
+.graph-overlay-main {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.graph-overlay-drawer {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, #1a2435, #162131);
+  box-shadow: var(--shadow-md);
+  padding: 10px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.graph-expand-icon-btn {
+  width: 34px;
+  height: 34px;
+  padding: 0;
 }
 
 .raw-card {
@@ -1169,6 +1274,16 @@ label span {
   .flow-toolbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .flow-filter-row {
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .graph-overlay-panel,
+  .graph-overlay-panel.host-open {
+    grid-template-columns: 1fr;
   }
 
   .raw-blocks {

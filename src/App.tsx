@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import ReactFlow, { Background, Controls, MiniMap, MarkerType, type Edge, type Node } from "reactflow";
+import ReactFlow, {
+  Background,
+  Controls,
+  MiniMap,
+  MarkerType,
+  useEdgesState,
+  useNodesState,
+  type Edge,
+  type Node,
+} from "reactflow";
 import "reactflow/dist/style.css";
 import "./App.css";
 
@@ -148,7 +157,7 @@ function hostTagClass(state: string) {
   }
 }
 
-function Icon({ name }: { name: "panelOpen" | "panelClose" | "plus" | "close" | "chevronDown" }) {
+function Icon({ name }: { name: "panelOpen" | "panelClose" | "plus" | "close" | "chevronDown" | "expand" | "compress" }) {
   if (name === "panelOpen") {
     return (
       <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -186,6 +195,36 @@ function Icon({ name }: { name: "panelOpen" | "panelClose" | "plus" | "close" | 
     );
   }
 
+  if (name === "expand") {
+    return (
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <polyline points="9,4 4,4 4,9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="4" y1="4" x2="10" y2="10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <polyline points="15,4 20,4 20,9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="20" y1="4" x2="14" y2="10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <polyline points="9,20 4,20 4,15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="4" y1="20" x2="10" y2="14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <polyline points="15,20 20,20 20,15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="20" y1="20" x2="14" y2="14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (name === "compress") {
+    return (
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <polyline points="10,10 4,10 4,4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="4" y1="4" x2="10" y2="10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <polyline points="14,10 20,10 20,4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="20" y1="4" x2="14" y2="10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <polyline points="10,14 4,14 4,20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="4" y1="20" x2="10" y2="14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <polyline points="14,14 20,14 20,20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="20" y1="20" x2="14" y2="14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
       <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
@@ -219,6 +258,11 @@ function App() {
   const [ribbonMenu, setRibbonMenu] = useState<RibbonMenu>(null);
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(true);
   const [graphExpanded, setGraphExpanded] = useState(false);
+  const [graphLimit, setGraphLimit] = useState<number>(0);
+  const [graphMinOpenPorts, setGraphMinOpenPorts] = useState<number>(0);
+  const [graphPortQuery, setGraphPortQuery] = useState("");
+  const [graphHostQuery, setGraphHostQuery] = useState("");
+  const [graphNodeAppearance, setGraphNodeAppearance] = useState<"rectangle" | "circle" | "dot">("rectangle");
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -287,12 +331,56 @@ function App() {
     return `nmap ${flags} ${target}`;
   }, [selectedTemplate, customFlags, scanTarget, activeOperation]);
 
+  const graphPortFilter = useMemo(
+    () =>
+      graphPortQuery
+        .split(/[\s,]+/)
+        .map((part) => Number(part.trim()))
+        .filter((port) => Number.isInteger(port) && port > 0),
+    [graphPortQuery],
+  );
+
+  const filteredHosts = useMemo(() => {
+    const hosts = activeScanResult?.hosts ?? [];
+    const query = graphHostQuery.trim().toLowerCase();
+
+    const result = hosts.filter((host) => {
+      const openPorts = host.ports.filter((port) => port.state === "open");
+
+      if (openPorts.length < graphMinOpenPorts) {
+        return false;
+      }
+
+      if (graphPortFilter.length > 0) {
+        const openPortSet = new Set(openPorts.map((port) => port.port));
+        if (!graphPortFilter.every((requiredPort) => openPortSet.has(requiredPort))) {
+          return false;
+        }
+      }
+
+      if (query) {
+        const haystack = `${host.address} ${host.hostname ?? ""}`.toLowerCase();
+        if (!haystack.includes(query)) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    if (graphLimit > 0) {
+      return result.slice(0, graphLimit);
+    }
+
+    return result;
+  }, [activeScanResult, graphHostQuery, graphLimit, graphMinOpenPorts, graphPortFilter]);
+
   const flowGraph = useMemo(() => {
     if (!activeScanResult) {
       return { nodes: [] as Node<FlowNodeData>[], edges: [] as Edge[] };
     }
 
-    const hosts = activeScanResult?.hosts ?? [];
+    const hosts = filteredHosts;
     const radius = hosts.length <= 1 ? 0 : Math.min(260, 130 + hosts.length * 18);
 
     const nodes: Node<FlowNodeData>[] = [
@@ -328,13 +416,19 @@ function App() {
       const y = Math.sin(angle) * radius;
       const isSelected = selectedHostAddress === host.address;
       const openPorts = host.ports.filter((port) => port.state === "open").length;
+      const isCircle = graphNodeAppearance === "circle";
+      const isDot = graphNodeAppearance === "dot";
 
       nodes.push({
         id: host.address,
         position: { x, y },
         data: {
-          label: (
-            <div className="flow-node-content">
+          label: isDot ? (
+            <div className="flow-node-content dot" title={`${host.hostname || host.address} · ${openPorts} open · ${host.state}`}>
+              <span className={isSelected ? "flow-node-dot-core active" : "flow-node-dot-core"} />
+            </div>
+          ) : (
+            <div className={isCircle ? "flow-node-content circle" : "flow-node-content"}>
               <strong>{host.hostname || host.address}</strong>
               <span>{openPorts} open · {host.state}</span>
             </div>
@@ -342,12 +436,23 @@ function App() {
         },
         draggable: true,
         style: {
-          width: 170,
-          borderRadius: 12,
+          width: isDot ? 24 : isCircle ? 104 : 170,
+          height: isDot ? 24 : isCircle ? 104 : undefined,
+          borderRadius: isDot || isCircle ? 999 : 12,
           border: isSelected ? "1px solid #79a6ff" : "1px solid #4f6484",
-          background: isSelected ? "linear-gradient(180deg, #324e7a, #2a4468)" : "linear-gradient(180deg, #263a5a, #22344d)",
+          background: isDot
+            ? isSelected
+              ? "rgba(121, 166, 255, 0.25)"
+              : "rgba(79, 100, 132, 0.22)"
+            : isSelected
+              ? "linear-gradient(180deg, #324e7a, #2a4468)"
+              : "linear-gradient(180deg, #263a5a, #22344d)",
           color: "#ecf3ff",
-          padding: "8px 10px",
+          padding: isDot ? "0" : isCircle ? "6px" : "8px 10px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          textAlign: "center",
         },
       });
 
@@ -362,7 +467,26 @@ function App() {
     });
 
     return { nodes, edges };
-  }, [activeScanResult, selectedHostAddress]);
+  }, [activeScanResult, filteredHosts, selectedHostAddress, graphNodeAppearance]);
+
+  const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState<FlowNodeData>([]);
+  const [flowEdges, setFlowEdges, onFlowEdgesChange] = useEdgesState([]);
+
+  useEffect(() => {
+    setFlowNodes(flowGraph.nodes);
+    setFlowEdges(flowGraph.edges);
+  }, [flowGraph, setFlowEdges, setFlowNodes]);
+
+  useEffect(() => {
+    if (!selectedHostAddress) {
+      return;
+    }
+
+    const visible = filteredHosts.some((host) => host.address === selectedHostAddress);
+    if (!visible) {
+      setSelectedHostAddress(null);
+    }
+  }, [filteredHosts, selectedHostAddress]);
 
   useEffect(() => {
     if (scanViewMode !== "graph" || !activeScanResult) {
@@ -670,20 +794,86 @@ function App() {
     return (
       <div className={expanded ? "flow-shell expanded" : "flow-shell"}>
         <div className="flow-toolbar">
-          <span>Drag nodes, use mouse wheel/pinch to zoom, and drag the canvas to pan.</span>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => setGraphExpanded((current) => !current)}
-          >
-            {expanded ? "Exit Expanded View" : "Expand Graph"}
-          </button>
+          <div className="flow-toolbar-info">Drag nodes, use wheel/pinch to zoom, drag canvas to pan.</div>
+          <div className="flow-filter-row">
+            <label className="flow-filter-item">
+              <span>Limit</span>
+              <select value={graphLimit} onChange={(event) => setGraphLimit(Number(event.currentTarget.value))}>
+                <option value={0}>All</option>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </label>
+
+            <label className="flow-filter-item">
+              <span>Min Open Ports</span>
+              <input
+                type="number"
+                min={0}
+                value={graphMinOpenPorts}
+                onChange={(event) => setGraphMinOpenPorts(Math.max(0, Number(event.currentTarget.value) || 0))}
+              />
+            </label>
+
+            <label className="flow-filter-item wide">
+              <span>Require Ports (e.g. 22,80)</span>
+              <input
+                value={graphPortQuery}
+                onChange={(event) => setGraphPortQuery(event.currentTarget.value)}
+                placeholder="22,80,443"
+              />
+            </label>
+
+            <label className="flow-filter-item wide">
+              <span>Host/IP Search</span>
+              <input
+                value={graphHostQuery}
+                onChange={(event) => setGraphHostQuery(event.currentTarget.value)}
+                placeholder="db-01 or 10.0.0.4"
+              />
+            </label>
+
+            <label className="flow-filter-item">
+              <span>Node Shape</span>
+              <select value={graphNodeAppearance} onChange={(event) => setGraphNodeAppearance(event.currentTarget.value as "rectangle" | "circle" | "dot") }>
+                <option value="rectangle">Rectangle</option>
+                <option value="circle">Circle</option>
+                <option value="dot">Minimal Dot</option>
+              </select>
+            </label>
+
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                setGraphLimit(0);
+                setGraphMinOpenPorts(0);
+                setGraphPortQuery("");
+                setGraphHostQuery("");
+              }}
+            >
+              Clear Filters
+            </button>
+
+            <button
+              type="button"
+              className="icon-btn graph-expand-icon-btn"
+              onClick={() => setGraphExpanded((current) => !current)}
+              aria-label={expanded ? "Exit expanded graph" : "Expand graph"}
+              title={expanded ? "Exit expanded graph" : "Expand graph"}
+            >
+              <Icon name={expanded ? "compress" : "expand"} />
+            </button>
+          </div>
         </div>
 
         <div className="flow-canvas">
           <ReactFlow
-            nodes={flowGraph.nodes}
-            edges={flowGraph.edges}
+            nodes={flowNodes}
+            edges={flowEdges}
+            onNodesChange={onFlowNodesChange}
+            onEdgesChange={onFlowEdgesChange}
             onNodeClick={(_, node) => {
               if (node.id === "__target__") {
                 setSelectedHostAddress(null);
@@ -697,6 +887,7 @@ function App() {
             minZoom={0.2}
             maxZoom={2.5}
             nodesConnectable={false}
+            nodesDraggable
             proOptions={{ hideAttribution: true }}
           >
             <MiniMap
@@ -735,7 +926,65 @@ function App() {
       );
     }
 
+    if (filteredHosts.length === 0) {
+      return (
+        <div className="graph-empty">
+          <strong>No hosts match current graph filters.</strong>
+          <p>Clear filters or adjust the query/port constraints to show nodes.</p>
+        </div>
+      );
+    }
+
     return renderGraphCanvas(false);
+  }
+
+  function renderHostDetailsContent(drawerClassName: string) {
+    if (!selectedHost) {
+      return null;
+    }
+
+    return (
+      <aside className={drawerClassName}>
+        <div className="right-drawer-header">
+          <div className="drawer-title">Host Details</div>
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => setSelectedHostAddress(null)}
+            aria-label="Close host details"
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+
+        <div className="host-detail-card">
+          <div className="host-detail-summary">
+            <strong>{selectedHost.address}</strong>
+            <div>{selectedHost.hostname || "No hostname discovered"}</div>
+            <span className={hostTagClass(selectedHost.state)}>{selectedHost.state}</span>
+            <div className="muted-line">{selectedHost.ports.length} discovered ports</div>
+          </div>
+
+          <div className="host-port-list">
+            {selectedHost.ports.length === 0 ? (
+              <div className="empty-state">No ports discovered for this host.</div>
+            ) : (
+              selectedHost.ports.map((port) => (
+                <div className="host-port-item" key={`${selectedHost.address}-${port.protocol}-${port.port}`}>
+                  <div>
+                    <strong>
+                      {port.port}/{port.protocol}
+                    </strong>
+                    <div className="muted-line">{port.service || "unknown service"}</div>
+                  </div>
+                  <span className={hostTagClass(port.state)}>{port.state}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </aside>
+    );
   }
 
   function renderRawOutput() {
@@ -1036,56 +1285,14 @@ function App() {
             </div>
           </section>
 
-          <aside className={selectedHost ? "drawer right-drawer open" : "drawer right-drawer"}>
-            {selectedHost ? (
-              <>
-                <div className="right-drawer-header">
-                  <div className="drawer-title">Host Details</div>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => setSelectedHostAddress(null)}
-                    aria-label="Close host details"
-                  >
-                    <Icon name="close" />
-                  </button>
-                </div>
-
-                <div className="host-detail-card">
-                  <div className="host-detail-summary">
-                    <strong>{selectedHost.address}</strong>
-                    <div>{selectedHost.hostname || "No hostname discovered"}</div>
-                    <span className={hostTagClass(selectedHost.state)}>{selectedHost.state}</span>
-                    <div className="muted-line">{selectedHost.ports.length} discovered ports</div>
-                  </div>
-
-                  <div className="host-port-list">
-                    {selectedHost.ports.length === 0 ? (
-                      <div className="empty-state">No ports discovered for this host.</div>
-                    ) : (
-                      selectedHost.ports.map((port) => (
-                        <div className="host-port-item" key={`${selectedHost.address}-${port.protocol}-${port.port}`}>
-                          <div>
-                            <strong>
-                              {port.port}/{port.protocol}
-                            </strong>
-                            <div className="muted-line">{port.service || "unknown service"}</div>
-                          </div>
-                          <span className={hostTagClass(port.state)}>{port.state}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </>
-            ) : null}
-          </aside>
+          {renderHostDetailsContent(selectedHost ? "drawer right-drawer open" : "drawer right-drawer")}
         </div>
 
         {graphExpanded && scanViewMode === "graph" && activeScanResult ? (
           <div className="graph-overlay" role="dialog" aria-modal="true">
-            <div className="graph-overlay-panel">
-              {renderGraphCanvas(true)}
+            <div className={selectedHost ? "graph-overlay-panel host-open" : "graph-overlay-panel"}>
+              <div className="graph-overlay-main">{renderGraphCanvas(true)}</div>
+              {renderHostDetailsContent("graph-overlay-drawer")}
             </div>
           </div>
         ) : null}
