@@ -58,6 +58,8 @@ struct ScanExecutionResult {
 #[derive(Clone, Serialize, Deserialize)]
 struct ScanJob {
     id: String,
+    #[serde(default)]
+    name: String,
     target: String,
     profile_id: String,
     profile_name: String,
@@ -121,6 +123,20 @@ struct RunScanInput {
     target: String,
     profile_id: String,
     custom_flags: Option<String>,
+    scan_name: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+struct RenameScanInput {
+    operation_id: String,
+    scan_id: String,
+    name: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct DeleteScanInput {
+    operation_id: String,
+    scan_id: String,
 }
 
 fn now_timestamp() -> String {
@@ -255,6 +271,16 @@ fn load_scan_result(app: &AppHandle, result_id: &str) -> Result<ScanExecutionRes
         .map_err(|error| format!("failed to read scan result: {}", error))?;
 
     serde_json::from_str(&raw).map_err(|error| format!("failed to parse scan result: {}", error))
+}
+
+fn delete_scan_result_file_if_present(app: &AppHandle, result_id: &str) -> Result<(), String> {
+    let result_path = scan_results_dir(app)?.join(format!("{}.json", result_id));
+
+    if !result_path.exists() {
+        return Ok(());
+    }
+
+    fs::remove_file(result_path).map_err(|error| format!("failed to remove scan result: {}", error))
 }
 
 fn has_command_in_path(command_name: &str) -> bool {
@@ -507,8 +533,29 @@ fn run_nmap_scan(app: &AppHandle, input: RunScanInput) -> Result<ScanExecutionRe
         return Err("operation not found".to_string());
     }
 
+    let default_scan_name = format!(
+        "scan-{}",
+        store
+            .operations
+            .iter()
+            .find(|operation| operation.id == input.operation_id)
+            .map_or(1, |operation| operation.scan_jobs.len() + 1)
+    );
+    let requested_scan_name = input
+        .scan_name
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let final_scan_name = if requested_scan_name.is_empty() {
+        default_scan_name
+    } else {
+        requested_scan_name
+    };
+
     let queued_job = ScanJob {
         id: scan_id.clone(),
+        name: final_scan_name,
         target: target.clone(),
         profile_id: template.id.clone(),
         profile_name: template.name.clone(),
@@ -751,8 +798,22 @@ fn queue_scan_job(app: AppHandle, input: RunScanInput) -> Result<Operation, Stri
         custom_flags.trim().to_string()
     };
 
+    let default_scan_name = format!("scan-{}", operation.scan_jobs.len() + 1);
+    let requested_scan_name = input
+        .scan_name
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let final_scan_name = if requested_scan_name.is_empty() {
+        default_scan_name
+    } else {
+        requested_scan_name
+    };
+
     operation.scan_jobs.push(ScanJob {
         id: next_id("scan"),
+        name: final_scan_name,
         target,
         profile_id: template.id.clone(),
         profile_name: template.name.clone(),
@@ -768,6 +829,59 @@ fn queue_scan_job(app: AppHandle, input: RunScanInput) -> Result<Operation, Stri
     let updated_operation = operation.clone();
 
     save_operation_store(&app, &store)?;
+
+    Ok(updated_operation)
+}
+
+#[tauri::command]
+fn rename_scan_job(app: AppHandle, input: RenameScanInput) -> Result<Operation, String> {
+    let mut store = load_operation_store(&app)?;
+
+    let operation = find_operation_mut(&mut store, &input.operation_id)
+        .ok_or_else(|| "operation not found".to_string())?;
+
+    let new_name = input.name.trim().to_string();
+    if new_name.is_empty() {
+        return Err("scan name cannot be empty".to_string());
+    }
+
+    let job = operation
+        .scan_jobs
+        .iter_mut()
+        .find(|job| job.id == input.scan_id)
+        .ok_or_else(|| "scan job not found".to_string())?;
+
+    job.name = new_name;
+    operation.updated_at = now_timestamp();
+    let updated_operation = operation.clone();
+
+    save_operation_store(&app, &store)?;
+    Ok(updated_operation)
+}
+
+#[tauri::command]
+fn delete_scan_job(app: AppHandle, input: DeleteScanInput) -> Result<Operation, String> {
+    let mut store = load_operation_store(&app)?;
+
+    let operation = find_operation_mut(&mut store, &input.operation_id)
+        .ok_or_else(|| "operation not found".to_string())?;
+
+    let scan_index = operation
+        .scan_jobs
+        .iter()
+        .position(|job| job.id == input.scan_id)
+        .ok_or_else(|| "scan job not found".to_string())?;
+
+    let removed_scan = operation.scan_jobs.remove(scan_index);
+    operation.updated_at = now_timestamp();
+    let updated_operation = operation.clone();
+
+    save_operation_store(&app, &store)?;
+
+    let result_id = removed_scan
+        .result_id
+        .unwrap_or_else(|| removed_scan.id.clone());
+    let _ = delete_scan_result_file_if_present(&app, &result_id);
 
     Ok(updated_operation)
 }
@@ -811,6 +925,8 @@ pub fn run() {
             create_operation,
             get_operation,
             delete_operation,
+            rename_scan_job,
+            delete_scan_job,
             queue_scan_job,
             run_scan,
             get_scan_result,

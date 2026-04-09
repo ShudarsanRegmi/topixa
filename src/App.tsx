@@ -23,6 +23,7 @@ type ScanTemplate = {
 
 type ScanJob = {
   id: string;
+  name?: string | null;
   target: string;
   profile_id: string;
   profile_name: string;
@@ -248,6 +249,8 @@ function App() {
   const [scanTarget, setScanTarget] = useState("");
   const [scanTemplateId, setScanTemplateId] = useState("");
   const [customFlags, setCustomFlags] = useState("");
+  const [scanName, setScanName] = useState("");
+  const [activeScanNameDraft, setActiveScanNameDraft] = useState("");
   const [newOperationName, setNewOperationName] = useState("");
   const [newOperationDescription, setNewOperationDescription] = useState("");
   const [newOperationScope, setNewOperationScope] = useState("192.168.1.0/24");
@@ -312,6 +315,16 @@ function App() {
 
   const activeScanResult = activeScanJobId ? scanResultsByJobId[activeScanJobId] ?? null : null;
   const activeScanLoadState = activeScanJobId ? scanLoadStateByJobId[activeScanJobId] ?? "idle" : "idle";
+
+  function getScanDisplayName(job: ScanJob, index: number) {
+    const name = job.name?.trim();
+    return name && name.length > 0 ? name : `scan-${index + 1}`;
+  }
+
+  function getNextScanName(operation: Operation | null) {
+    const next = (operation?.scan_jobs.length ?? 0) + 1;
+    return `scan-${next}`;
+  }
 
   const selectedHost = useMemo(() => {
     if (!activeScanResult || !selectedHostAddress) {
@@ -494,6 +507,26 @@ function App() {
     }
   }, [scanViewMode, activeScanResult]);
 
+  useEffect(() => {
+    if (!activeScanJobId) {
+      setActiveScanNameDraft("");
+      return;
+    }
+
+    const index = operationJobs.findIndex((job) => job.id === activeScanJobId);
+    if (index === -1) {
+      setActiveScanNameDraft("");
+      return;
+    }
+
+    setActiveScanNameDraft(getScanDisplayName(operationJobs[index], index));
+  }, [activeScanJobId, operationJobs]);
+
+  function openScanConfigDialog() {
+    setScanName(getNextScanName(activeOperation));
+    setShowScanConfigDialog(true);
+  }
+
   async function refreshOperations() {
     const operationResult = await invoke<OperationSummary[]>("list_operations");
     setOperations(operationResult);
@@ -631,6 +664,7 @@ function App() {
           target,
           profile_id: scanTemplateId,
           custom_flags: customFlags.trim(),
+          scan_name: scanName.trim(),
         },
       });
 
@@ -639,6 +673,7 @@ function App() {
       setActiveScanJobId(result.scan_id);
       setSelectedHostAddress(null);
       setShowScanConfigDialog(false);
+      setScanName("");
 
       const refreshedOperation = await invoke<Operation>("get_operation", { operationId: activeOperation.id });
       setActiveOperation(refreshedOperation);
@@ -669,6 +704,89 @@ function App() {
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : String(requestError);
       setError(`Unable to delete operation: ${message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function renameActiveScan() {
+    if (!activeOperation || !activeScanJobId) {
+      return;
+    }
+
+    const nextName = activeScanNameDraft.trim();
+    if (!nextName) {
+      setError("Scan name cannot be empty.");
+      return;
+    }
+
+    try {
+      setIsBusy(true);
+      setError(null);
+
+      const updatedOperation = await invoke<Operation>("rename_scan_job", {
+        input: {
+          operation_id: activeOperation.id,
+          scan_id: activeScanJobId,
+          name: nextName,
+        },
+      });
+
+      setActiveOperation(updatedOperation);
+      await refreshOperations();
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : String(requestError);
+      setError(`Unable to rename scan: ${message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function deleteScan(scanId: string) {
+    if (!activeOperation) {
+      return;
+    }
+
+    const confirmed = window.confirm("Delete this scan and its saved results?");
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setIsBusy(true);
+      setError(null);
+
+      const updatedOperation = await invoke<Operation>("delete_scan_job", {
+        input: {
+          operation_id: activeOperation.id,
+          scan_id: scanId,
+        },
+      });
+
+      setActiveOperation(updatedOperation);
+      setScanResultsByJobId((current) => {
+        const next = { ...current };
+        delete next[scanId];
+        return next;
+      });
+      setScanLoadStateByJobId((current) => {
+        const next = { ...current };
+        delete next[scanId];
+        return next;
+      });
+
+      if (activeScanJobId === scanId) {
+        const fallback = [...updatedOperation.scan_jobs]
+          .sort((a, b) => toTimestampMillis(b.created_at) - toTimestampMillis(a.created_at))[0]
+          ?.id ?? null;
+        setActiveScanJobId(fallback);
+        setSelectedHostAddress(null);
+      }
+
+      await refreshOperations();
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : String(requestError);
+      setError(`Unable to delete scan: ${message}`);
     } finally {
       setIsBusy(false);
     }
@@ -1134,7 +1252,7 @@ function App() {
               </button>
               {ribbonMenu === "settings" ? (
                 <div className="ribbon-submenu">
-                  <button type="button" onClick={() => { setShowScanConfigDialog(true); setRibbonMenu(null); }}>New Scan</button>
+                  <button type="button" onClick={() => { openScanConfigDialog(); setRibbonMenu(null); }}>New Scan</button>
                   <button type="button" onClick={() => { setLeftDrawerOpen((v) => !v); setRibbonMenu(null); }}>
                     {leftDrawerOpen ? "Collapse Left Drawer" : "Expand Left Drawer"}
                   </button>
@@ -1176,7 +1294,7 @@ function App() {
               <button
                 type="button"
                 className="icon-btn"
-                onClick={() => setShowScanConfigDialog(true)}
+                onClick={openScanConfigDialog}
                 aria-label="Open scan configuration"
               >
                 <Icon name="plus" />
@@ -1191,7 +1309,7 @@ function App() {
                     <div className="empty-state">No scans yet.</div>
                   ) : (
                     operationJobs.map((job, index) => {
-                      const label = `scan${index + 1}`;
+                      const label = getScanDisplayName(job, index);
                       const isActive = job.id === activeScanJobId;
 
                       return (
@@ -1250,6 +1368,28 @@ function App() {
                 >
                   XML
                 </button>
+
+                {activeScanJob ? (
+                  <div className="scan-name-controls">
+                    <input
+                      value={activeScanNameDraft}
+                      onChange={(event) => setActiveScanNameDraft(event.currentTarget.value)}
+                      placeholder="scan name"
+                    />
+                    <button type="button" className="secondary" onClick={renameActiveScan} disabled={isBusy || !activeScanJobId}>
+                      Save Name
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary danger-btn"
+                      onClick={() => activeScanJobId && deleteScan(activeScanJobId)}
+                      disabled={isBusy || !activeScanJobId}
+                    >
+                      Delete Scan
+                    </button>
+                  </div>
+                ) : null}
+
                 <span>{activeOperation?.name || "Open an operation"}</span>
               </div>
             </div>
@@ -1273,7 +1413,7 @@ function App() {
                         setSelectedHostAddress(null);
                       }}
                     >
-                      scan{index + 1}
+                      {getScanDisplayName(job, index)}
                     </button>
                   );
                 })
@@ -1323,6 +1463,15 @@ function App() {
               </label>
 
               <div className="scan-config-row">
+                <label>
+                  <span>Scan name</span>
+                  <input
+                    value={scanName}
+                    onChange={(event) => setScanName(event.currentTarget.value)}
+                    placeholder={getNextScanName(activeOperation)}
+                  />
+                </label>
+
                 <label>
                   <span>Template</span>
                   <select value={scanTemplateId} onChange={(event) => setScanTemplateId(event.currentTarget.value)}>

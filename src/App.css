@@ -605,6 +605,19 @@ label span {
   flex-wrap: wrap;
 }
 
+.scan-name-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scan-name-controls input {
+  width: 170px;
+  padding: 7px 9px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+}
+
 .view-toggle-btn {
   appearance: none;
   border: 1px solid var(--line-strong);
@@ -1284,6 +1297,15 @@ label span {
 
   .scan-config-row {
     grid-template-columns: 1fr;
+  }
+
+  .scan-name-controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .scan-name-controls input {
+    width: 100%;
   }
 
   .flow-toolbar {
