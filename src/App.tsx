@@ -205,6 +205,7 @@ function App() {
   const [newOperationDescription, setNewOperationDescription] = useState("");
   const [newOperationScope, setNewOperationScope] = useState("192.168.1.0/24");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [showManageDialog, setShowManageDialog] = useState(false);
   const [showScanConfigDialog, setShowScanConfigDialog] = useState(false);
   const [showHelpDialog, setShowHelpDialog] = useState(false);
   const [ribbonMenu, setRibbonMenu] = useState<RibbonMenu>(null);
@@ -313,6 +314,7 @@ function App() {
       setScanLoadStateByJobId({});
       setSelectedHostAddress(null);
       setShowCreateDialog(false);
+      setShowManageDialog(false);
       setShowScanConfigDialog(false);
       setShowHelpDialog(false);
       setRibbonMenu(null);
@@ -335,7 +337,7 @@ function App() {
 
       for (const job of completedJobs) {
         try {
-          const result = await invoke<ScanExecutionResult>("get_scan_result", { job_id: job.id });
+          const result = await invoke<ScanExecutionResult>("get_scan_result", { jobId: job.id });
           recoveredResults[job.id] = result;
           recoveredStates[job.id] = "loaded";
           initialScanJobId = job.id;
@@ -390,6 +392,7 @@ function App() {
       setNewOperationName("");
       setNewOperationDescription("");
       setShowCreateDialog(false);
+      setShowManageDialog(false);
       setShowScanConfigDialog(false);
       setShowHelpDialog(false);
       setRibbonMenu(null);
@@ -452,6 +455,28 @@ function App() {
     }
   }
 
+  async function deleteOperation(operationId: string) {
+    try {
+      setIsBusy(true);
+      setError(null);
+      await invoke("delete_operation", { operationId });
+
+      if (activeOperation?.id === operationId) {
+        setActiveOperation(null);
+        setActiveScanJobId(null);
+        setSelectedHostAddress(null);
+        setMode("launcher");
+      }
+
+      await refreshOperations();
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : String(requestError);
+      setError(`Unable to delete operation: ${message}`);
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   useEffect(() => {
     if (!activeOperation || !activeScanJobId) {
       return;
@@ -474,7 +499,7 @@ function App() {
     let cancelled = false;
     setScanLoadStateByJobId((current) => ({ ...current, [activeScanJobId]: "loading" }));
 
-    invoke<ScanExecutionResult>("get_scan_result", { job_id: activeScanJobId })
+    invoke<ScanExecutionResult>("get_scan_result", { jobId: activeScanJobId })
       .then((result) => {
         if (cancelled) {
           return;
@@ -533,6 +558,9 @@ function App() {
               +
             </button>
             <div className="launcher-new-label">Create New Operation</div>
+            <button type="button" className="secondary launcher-manage-button" onClick={() => setShowManageDialog(true)}>
+              Manage Operations
+            </button>
           </div>
 
           <aside className="launcher-recent">
@@ -978,6 +1006,62 @@ function App() {
               </button>
               <button type="button" className="primary" onClick={createOperation} disabled={isBusy}>
                 Create Operation
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showManageDialog ? (
+        <div className="create-modal-overlay" role="dialog" aria-modal="true">
+          <div className="create-modal manage-modal">
+            <div className="scan-config-modal-header">
+              <h3>Manage Operations</h3>
+              <button type="button" className="icon-btn" onClick={() => setShowManageDialog(false)}>
+                <Icon name="close" />
+              </button>
+            </div>
+
+            <div className="manage-ops-list">
+              {operations.length === 0 ? (
+                <div className="empty-state">No operations available.</div>
+              ) : (
+                operations.map((operation) => (
+                  <div className="manage-op-row" key={operation.id}>
+                    <div>
+                      <strong>{operation.name}</strong>
+                      <div className="muted-line">{operation.target_scope}</div>
+                      <div className="muted-line">{operation.scan_count} scans · updated {formatStamp(operation.updated_at)}</div>
+                    </div>
+                    <div className="manage-op-actions">
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={() => {
+                          openOperation(operation.id);
+                          setShowManageDialog(false);
+                        }}
+                        disabled={isBusy}
+                      >
+                        Open
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary danger-btn"
+                        onClick={() => deleteOperation(operation.id)}
+                        disabled={isBusy}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="modal-actions">
+              <button type="button" className="secondary" onClick={() => setShowManageDialog(false)}>
+                Close
               </button>
             </div>
           </div>

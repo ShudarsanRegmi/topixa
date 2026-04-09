@@ -219,6 +219,10 @@ label span {
   color: var(--text-soft);
 }
 
+.launcher-manage-button {
+  margin-top: 2px;
+}
+
 .launcher-recent h3 {
   margin: 0;
   font-size: 17px;
@@ -763,6 +767,51 @@ label span {
 
 .scan-config-modal {
   width: min(760px, 100%);
+}
+
+.manage-modal {
+  width: min(760px, 100%);
+}
+
+.manage-ops-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.manage-op-row {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #1a2537;
+  padding: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.manage-op-row strong {
+  font-size: 14px;
+}
+
+.manage-op-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.danger-btn {
+  border-color: rgba(255, 111, 125, 0.45);
+  color: #ffb7c0;
+  background: rgba(255, 111, 125, 0.12);
+}
+
+.danger-btn:hover {
+  background: rgba(255, 111, 125, 0.2);
+  border-color: rgba(255, 111, 125, 0.6);
 }
 
 .help-modal {
