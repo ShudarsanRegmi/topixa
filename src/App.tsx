@@ -106,8 +106,26 @@ type FlowNodeData = {
   label: ReactNode;
 };
 
+type GraphNodeAppearance = "rectangle" | "circle" | "dot";
+
+type GraphFilterState = {
+  graphLimit: number;
+  graphMinOpenPorts: number;
+  graphPortQuery: string;
+  graphHostQuery: string;
+  graphNodeAppearance: GraphNodeAppearance;
+};
+
 type AppMode = "launcher" | "workspace";
 type RibbonMenu = "file" | "settings" | "help" | null;
+
+const DEFAULT_GRAPH_FILTERS: GraphFilterState = {
+  graphLimit: 0,
+  graphMinOpenPorts: 0,
+  graphPortQuery: "",
+  graphHostQuery: "",
+  graphNodeAppearance: "rectangle",
+};
 
 function formatStamp(value?: string | null) {
   if (!value) {
@@ -272,11 +290,7 @@ function App() {
   const [ribbonMenu, setRibbonMenu] = useState<RibbonMenu>(null);
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(true);
   const [graphExpanded, setGraphExpanded] = useState(false);
-  const [graphLimit, setGraphLimit] = useState<number>(0);
-  const [graphMinOpenPorts, setGraphMinOpenPorts] = useState<number>(0);
-  const [graphPortQuery, setGraphPortQuery] = useState("");
-  const [graphHostQuery, setGraphHostQuery] = useState("");
-  const [graphNodeAppearance, setGraphNodeAppearance] = useState<"rectangle" | "circle" | "dot">("rectangle");
+  const [graphFiltersByScanId, setGraphFiltersByScanId] = useState<Record<string, GraphFilterState>>({});
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -327,6 +341,23 @@ function App() {
   const activeScanResult = activeScanJobId ? scanResultsByJobId[activeScanJobId] ?? null : null;
   const activeScanLoadState = activeScanJobId ? scanLoadStateByJobId[activeScanJobId] ?? "idle" : "idle";
   const activeScanProgress = activeScanJobId ? scanProgressByJobId[activeScanJobId] ?? null : null;
+  const activeGraphFilters = activeScanJobId
+    ? (graphFiltersByScanId[activeScanJobId] ?? DEFAULT_GRAPH_FILTERS)
+    : DEFAULT_GRAPH_FILTERS;
+
+  function updateActiveGraphFilters(update: Partial<GraphFilterState>) {
+    if (!activeScanJobId) {
+      return;
+    }
+
+    setGraphFiltersByScanId((current) => ({
+      ...current,
+      [activeScanJobId]: {
+        ...(current[activeScanJobId] ?? DEFAULT_GRAPH_FILTERS),
+        ...update,
+      },
+    }));
+  }
 
   function getScanDisplayName(job: ScanJob, index: number) {
     const name = job.name?.trim();
@@ -358,21 +389,21 @@ function App() {
 
   const graphPortFilter = useMemo(
     () =>
-      graphPortQuery
+      activeGraphFilters.graphPortQuery
         .split(/[\s,]+/)
         .map((part) => Number(part.trim()))
         .filter((port) => Number.isInteger(port) && port > 0),
-    [graphPortQuery],
+    [activeGraphFilters.graphPortQuery],
   );
 
   const filteredHosts = useMemo(() => {
     const hosts = activeScanResult?.hosts ?? [];
-    const query = graphHostQuery.trim().toLowerCase();
+    const query = activeGraphFilters.graphHostQuery.trim().toLowerCase();
 
     const result = hosts.filter((host) => {
       const openPorts = host.ports.filter((port) => port.state === "open");
 
-      if (openPorts.length < graphMinOpenPorts) {
+      if (openPorts.length < activeGraphFilters.graphMinOpenPorts) {
         return false;
       }
 
@@ -393,12 +424,12 @@ function App() {
       return true;
     });
 
-    if (graphLimit > 0) {
-      return result.slice(0, graphLimit);
+    if (activeGraphFilters.graphLimit > 0) {
+      return result.slice(0, activeGraphFilters.graphLimit);
     }
 
     return result;
-  }, [activeScanResult, graphHostQuery, graphLimit, graphMinOpenPorts, graphPortFilter]);
+  }, [activeScanResult, activeGraphFilters.graphHostQuery, activeGraphFilters.graphLimit, activeGraphFilters.graphMinOpenPorts, graphPortFilter]);
 
   const flowGraph = useMemo(() => {
     if (!activeScanResult) {
@@ -441,8 +472,8 @@ function App() {
       const y = Math.sin(angle) * radius;
       const isSelected = selectedHostAddress === host.address;
       const openPorts = host.ports.filter((port) => port.state === "open").length;
-      const isCircle = graphNodeAppearance === "circle";
-      const isDot = graphNodeAppearance === "dot";
+      const isCircle = activeGraphFilters.graphNodeAppearance === "circle";
+      const isDot = activeGraphFilters.graphNodeAppearance === "dot";
 
       nodes.push({
         id: host.address,
@@ -492,7 +523,7 @@ function App() {
     });
 
     return { nodes, edges };
-  }, [activeScanResult, filteredHosts, selectedHostAddress, graphNodeAppearance]);
+  }, [activeScanResult, filteredHosts, selectedHostAddress, activeGraphFilters.graphNodeAppearance]);
 
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState<FlowNodeData>([]);
   const [flowEdges, setFlowEdges, onFlowEdgesChange] = useEdgesState([]);
@@ -889,6 +920,11 @@ function App() {
         delete next[scanId];
         return next;
       });
+      setGraphFiltersByScanId((current) => {
+        const next = { ...current };
+        delete next[scanId];
+        return next;
+      });
 
       if (activeScanJobId === scanId) {
         const fallback = [...updatedOperation.scan_jobs]
@@ -1027,7 +1063,7 @@ function App() {
           <div className="flow-filter-row">
             <label className="flow-filter-item">
               <span>Limit</span>
-              <select value={graphLimit} onChange={(event) => setGraphLimit(Number(event.currentTarget.value))}>
+              <select value={activeGraphFilters.graphLimit} onChange={(event) => updateActiveGraphFilters({ graphLimit: Number(event.currentTarget.value) })}>
                 <option value={0}>All</option>
                 <option value={10}>10</option>
                 <option value={25}>25</option>
@@ -1040,16 +1076,16 @@ function App() {
               <input
                 type="number"
                 min={0}
-                value={graphMinOpenPorts}
-                onChange={(event) => setGraphMinOpenPorts(Math.max(0, Number(event.currentTarget.value) || 0))}
+                value={activeGraphFilters.graphMinOpenPorts}
+                onChange={(event) => updateActiveGraphFilters({ graphMinOpenPorts: Math.max(0, Number(event.currentTarget.value) || 0) })}
               />
             </label>
 
             <label className="flow-filter-item wide">
               <span>Require Ports (e.g. 22,80)</span>
               <input
-                value={graphPortQuery}
-                onChange={(event) => setGraphPortQuery(event.currentTarget.value)}
+                value={activeGraphFilters.graphPortQuery}
+                onChange={(event) => updateActiveGraphFilters({ graphPortQuery: event.currentTarget.value })}
                 placeholder="22,80,443"
               />
             </label>
@@ -1057,15 +1093,15 @@ function App() {
             <label className="flow-filter-item wide">
               <span>Host/IP Search</span>
               <input
-                value={graphHostQuery}
-                onChange={(event) => setGraphHostQuery(event.currentTarget.value)}
+                value={activeGraphFilters.graphHostQuery}
+                onChange={(event) => updateActiveGraphFilters({ graphHostQuery: event.currentTarget.value })}
                 placeholder="db-01 or 10.0.0.4"
               />
             </label>
 
             <label className="flow-filter-item">
               <span>Node Shape</span>
-              <select value={graphNodeAppearance} onChange={(event) => setGraphNodeAppearance(event.currentTarget.value as "rectangle" | "circle" | "dot") }>
+              <select value={activeGraphFilters.graphNodeAppearance} onChange={(event) => updateActiveGraphFilters({ graphNodeAppearance: event.currentTarget.value as GraphNodeAppearance }) }>
                 <option value="rectangle">Rectangle</option>
                 <option value="circle">Circle</option>
                 <option value="dot">Minimal Dot</option>
@@ -1076,10 +1112,7 @@ function App() {
               type="button"
               className="secondary"
               onClick={() => {
-                setGraphLimit(0);
-                setGraphMinOpenPorts(0);
-                setGraphPortQuery("");
-                setGraphHostQuery("");
+                updateActiveGraphFilters(DEFAULT_GRAPH_FILTERS);
               }}
             >
               Clear Filters
