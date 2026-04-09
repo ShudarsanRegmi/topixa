@@ -13,7 +13,7 @@ struct ScannerStatus {
     available: bool,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ScanPortResult {
     port: u16,
     protocol: String,
@@ -21,7 +21,7 @@ struct ScanPortResult {
     service: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ScanHostResult {
     address: String,
     hostname: Option<String>,
@@ -29,7 +29,7 @@ struct ScanHostResult {
     ports: Vec<ScanPortResult>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ScanSummary {
     total_hosts: usize,
     hosts_up: usize,
@@ -37,7 +37,7 @@ struct ScanSummary {
     open_ports: usize,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ScanExecutionResult {
     scan_id: String,
     operation_id: String,
@@ -66,6 +66,8 @@ struct ScanJob {
     result_summary: Option<String>,
     #[serde(default)]
     finished_at: Option<String>,
+    #[serde(default)]
+    result_id: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -210,6 +212,47 @@ fn save_operation_store(app: &AppHandle, store: &OperationStore) -> Result<(), S
         .map_err(|error| format!("failed to write operations store: {}", error))?;
 
     Ok(())
+}
+
+fn scan_results_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| format!("failed to resolve app data dir: {}", error))?;
+
+    let results_dir = app_data_dir.join("scan_results");
+    fs::create_dir_all(&results_dir)
+        .map_err(|error| format!("failed to create scan results dir: {}", error))?;
+
+    Ok(results_dir)
+}
+
+fn save_scan_result(app: &AppHandle, result: &ScanExecutionResult) -> Result<String, String> {
+    let results_dir = scan_results_dir(app)?;
+    let result_id = result.scan_id.clone();
+    let result_path = results_dir.join(format!("{}.json", result_id));
+
+    let serialized = serde_json::to_string_pretty(result)
+        .map_err(|error| format!("failed to serialize scan result: {}", error))?;
+
+    fs::write(&result_path, serialized)
+        .map_err(|error| format!("failed to write scan result: {}", error))?;
+
+    Ok(result_id)
+}
+
+fn load_scan_result(app: &AppHandle, result_id: &str) -> Result<ScanExecutionResult, String> {
+    let results_dir = scan_results_dir(app)?;
+    let result_path = results_dir.join(format!("{}.json", result_id));
+
+    if !result_path.exists() {
+        return Err(format!("scan result not found: {}", result_id));
+    }
+
+    let raw = fs::read_to_string(&result_path)
+        .map_err(|error| format!("failed to read scan result: {}", error))?;
+
+    serde_json::from_str(&raw).map_err(|error| format!("failed to parse scan result: {}", error))
 }
 
 fn has_command_in_path(command_name: &str) -> bool {
@@ -468,6 +511,7 @@ fn run_nmap_scan(app: &AppHandle, input: RunScanInput) -> Result<ScanExecutionRe
         created_at: started_at.clone(),
         result_summary: None,
         finished_at: None,
+        result_id: None,
     };
 
     {
@@ -523,35 +567,57 @@ fn run_nmap_scan(app: &AppHandle, input: RunScanInput) -> Result<ScanExecutionRe
 
     let job_status = if output.status.success() { "completed" } else { "failed" };
 
+    if !output.status.success() && hosts.is_empty() {
+        let mut store = load_operation_store(app)?;
+        update_operation_scan_job(
+            &mut store,
+            &input.operation_id,
+            &scan_id,
+            job_status,
+            Some(result_summary.clone()),
+            Some(finished_at.clone()),
+        )?;
+        save_operation_store(app, &store)?;
+        return Err(format!("nmap exited with error: {}", stderr.trim()));
+    }
+
+    let execution_result = ScanExecutionResult {
+        scan_id: scan_id.clone(),
+        operation_id: input.operation_id.clone(),
+        target,
+        profile_name: template.name,
+        command: command_preview,
+        started_at,
+        finished_at: finished_at.clone(),
+        duration_ms,
+        summary,
+        hosts,
+        stdout,
+        stderr,
+    };
+
+    // Persist full scan payload. Do not swallow failures, otherwise reopening an operation cannot render graph data.
+    let result_id = save_scan_result(app, &execution_result)?;
+
     let mut store = load_operation_store(app)?;
     update_operation_scan_job(
         &mut store,
         &input.operation_id,
         &scan_id,
         job_status,
-        Some(result_summary.clone()),
-        Some(finished_at.clone()),
+        Some(result_summary),
+        Some(finished_at),
     )?;
-    save_operation_store(app, &store)?;
 
-    if !output.status.success() && hosts.is_empty() {
-        return Err(format!("nmap exited with error: {}", stderr.trim()));
+    if let Some(operation) = find_operation_mut(&mut store, &input.operation_id) {
+        if let Some(job) = operation.scan_jobs.iter_mut().find(|j| j.id == scan_id) {
+            job.result_id = Some(result_id);
+        }
     }
 
-    Ok(ScanExecutionResult {
-        scan_id,
-        operation_id: input.operation_id,
-        target,
-        profile_name: template.name,
-        command: command_preview,
-        started_at,
-        finished_at,
-        duration_ms,
-        summary,
-        hosts,
-        stdout,
-        stderr,
-    })
+    save_operation_store(app, &store)?;
+
+    Ok(execution_result)
 }
 
 fn find_operation_mut<'a>(store: &'a mut OperationStore, operation_id: &str) -> Option<&'a mut Operation> {
@@ -680,6 +746,7 @@ fn queue_scan_job(app: AppHandle, input: RunScanInput) -> Result<Operation, Stri
         created_at: now_timestamp(),
         result_summary: None,
         finished_at: None,
+        result_id: None,
     });
 
     operation.updated_at = now_timestamp();
@@ -691,8 +758,31 @@ fn queue_scan_job(app: AppHandle, input: RunScanInput) -> Result<Operation, Stri
 }
 
 #[tauri::command]
-fn run_scan(app: AppHandle, input: RunScanInput) -> Result<ScanExecutionResult, String> {
-    run_nmap_scan(&app, input)
+fn get_scan_result(app: AppHandle, job_id: String) -> Result<ScanExecutionResult, String> {
+    // Backward/forward compatible lookup:
+    // 1) try legacy convention where result file is keyed by job_id
+    // 2) if missing, resolve job.result_id from operations store
+    if let Ok(result) = load_scan_result(&app, &job_id) {
+        return Ok(result);
+    }
+
+    let store = load_operation_store(&app)?;
+    let result_id = store
+        .operations
+        .iter()
+        .flat_map(|operation| operation.scan_jobs.iter())
+        .find(|job| job.id == job_id)
+        .and_then(|job| job.result_id.clone())
+        .ok_or_else(|| format!("scan result not found for job {}", job_id))?;
+
+    load_scan_result(&app, &result_id)
+}
+
+#[tauri::command]
+async fn run_scan(app: AppHandle, input: RunScanInput) -> Result<ScanExecutionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || run_nmap_scan(&app, input))
+        .await
+        .map_err(|error| format!("failed to join scan task: {}", error))?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -708,6 +798,7 @@ pub fn run() {
             delete_operation,
             queue_scan_job,
             run_scan,
+            get_scan_result,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
