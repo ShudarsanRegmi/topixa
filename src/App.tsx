@@ -92,6 +92,16 @@ type ScanExecutionResult = {
   xml_output?: string;
 };
 
+type ScanQueueProgress = {
+  operation_id: string;
+  scan_id: string;
+  status: string;
+  progress_percent: number;
+  scanned_hosts: number;
+  total_hosts: number;
+  message?: string | null;
+};
+
 type FlowNodeData = {
   label: ReactNode;
 };
@@ -245,6 +255,7 @@ function App() {
   const [scanLoadStateByJobId, setScanLoadStateByJobId] = useState<
     Record<string, "idle" | "loading" | "loaded" | "failed">
   >({});
+  const [scanProgressByJobId, setScanProgressByJobId] = useState<Record<string, ScanQueueProgress>>({});
   const [selectedHostAddress, setSelectedHostAddress] = useState<string | null>(null);
   const [scanTarget, setScanTarget] = useState("");
   const [scanTemplateId, setScanTemplateId] = useState("");
@@ -315,6 +326,7 @@ function App() {
 
   const activeScanResult = activeScanJobId ? scanResultsByJobId[activeScanJobId] ?? null : null;
   const activeScanLoadState = activeScanJobId ? scanLoadStateByJobId[activeScanJobId] ?? "idle" : "idle";
+  const activeScanProgress = activeScanJobId ? scanProgressByJobId[activeScanJobId] ?? null : null;
 
   function getScanDisplayName(job: ScanJob, index: number) {
     const name = job.name?.trim();
@@ -542,6 +554,7 @@ function App() {
       setScanTarget(operation.target_scope);
       setScanResultsByJobId({});
       setScanLoadStateByJobId({});
+      setScanProgressByJobId({});
       setSelectedHostAddress(null);
       setShowCreateDialog(false);
       setShowManageDialog(false);
@@ -618,6 +631,7 @@ function App() {
       setActiveScanJobId(null);
       setScanResultsByJobId({});
       setScanLoadStateByJobId({});
+      setScanProgressByJobId({});
       setSelectedHostAddress(null);
       setNewOperationName("");
       setNewOperationDescription("");
@@ -657,8 +671,10 @@ function App() {
     try {
       setIsBusy(true);
       setError(null);
+      setShowScanConfigDialog(false);
+      setScanName("");
 
-      const result = await invoke<ScanExecutionResult>("run_scan", {
+      const queuedOperation = await invoke<Operation>("queue_scan_job", {
         input: {
           operation_id: activeOperation.id,
           target,
@@ -668,15 +684,34 @@ function App() {
         },
       });
 
-      setScanResultsByJobId((current) => ({ ...current, [result.scan_id]: result }));
-      setScanLoadStateByJobId((current) => ({ ...current, [result.scan_id]: "loaded" }));
-      setActiveScanJobId(result.scan_id);
-      setSelectedHostAddress(null);
-      setShowScanConfigDialog(false);
-      setScanName("");
+      const queuedJob = [...queuedOperation.scan_jobs].sort((a, b) => toTimestampMillis(b.created_at) - toTimestampMillis(a.created_at))[0];
+      if (!queuedJob) {
+        throw new Error("failed to queue scan");
+      }
 
-      const refreshedOperation = await invoke<Operation>("get_operation", { operationId: activeOperation.id });
-      setActiveOperation(refreshedOperation);
+      setActiveOperation(queuedOperation);
+      setActiveScanJobId(queuedJob.id);
+      setSelectedHostAddress(null);
+      setScanLoadStateByJobId((current) => ({ ...current, [queuedJob.id]: "idle" }));
+      setScanProgressByJobId((current) => ({
+        ...current,
+        [queuedJob.id]: {
+          operation_id: activeOperation.id,
+          scan_id: queuedJob.id,
+          status: "queued",
+          progress_percent: 0,
+          scanned_hosts: 0,
+          total_hosts: 0,
+        },
+      }));
+
+      await invoke("enqueue_queued_scan", {
+        input: {
+          operation_id: activeOperation.id,
+          scan_id: queuedJob.id,
+        },
+      });
+
       await refreshOperations();
       setMode("workspace");
     } catch (requestError) {
@@ -686,6 +721,86 @@ function App() {
       setIsBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!activeOperation) {
+      return;
+    }
+
+    const hasActiveQueueJobs = activeOperation.scan_jobs.some((job) => job.status === "queued" || job.status === "running");
+    if (!hasActiveQueueJobs) {
+      return;
+    }
+
+    let cancelled = false;
+    const interval = window.setInterval(async () => {
+      if (cancelled) {
+        return;
+      }
+
+      try {
+        const refreshed = await invoke<Operation>("get_operation", { operationId: activeOperation.id });
+        if (!cancelled) {
+          setActiveOperation(refreshed);
+        }
+      } catch {
+        // Best-effort polling.
+      }
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeOperation]);
+
+  useEffect(() => {
+    if (!activeOperation) {
+      return;
+    }
+
+    const activeQueueJobs = activeOperation.scan_jobs.filter((job) => job.status === "queued" || job.status === "running");
+    if (activeQueueJobs.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const poll = async () => {
+      const updates = await Promise.all(
+        activeQueueJobs.map((job) =>
+          invoke<ScanQueueProgress | null>("get_scan_progress", {
+            operation_id: activeOperation.id,
+            scan_id: job.id,
+          }).catch(() => null),
+        ),
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      setScanProgressByJobId((current) => {
+        const next = { ...current };
+        for (const update of updates) {
+          if (update) {
+            next[update.scan_id] = update;
+          }
+        }
+        return next;
+      });
+    };
+
+    void poll();
+    const interval = window.setInterval(() => {
+      void poll();
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [activeOperation]);
 
   async function deleteOperation(operationId: string) {
     try {
@@ -811,28 +926,24 @@ function App() {
       return;
     }
 
-    let cancelled = false;
     setScanLoadStateByJobId((current) => ({ ...current, [activeScanJobId]: "loading" }));
+
+    const timeout = window.setTimeout(() => {
+      setScanLoadStateByJobId((current) => ({ ...current, [activeScanJobId]: "failed" }));
+      setError("Timed out while loading saved scan payload. Retry or select another scan.");
+    }, 12000);
 
     invoke<ScanExecutionResult>("get_scan_result", { jobId: activeScanJobId })
       .then((result) => {
-        if (cancelled) {
-          return;
-        }
-
+        window.clearTimeout(timeout);
         setScanLoadStateByJobId((current) => ({ ...current, [activeScanJobId]: "loaded" }));
         setScanResultsByJobId((current) => ({ ...current, [activeScanJobId]: result }));
       })
       .catch(() => {
-        if (!cancelled) {
-          setScanLoadStateByJobId((current) => ({ ...current, [activeScanJobId]: "failed" }));
-          setError("Unable to load saved graph payload for this scan.");
-        }
+        window.clearTimeout(timeout);
+        setScanLoadStateByJobId((current) => ({ ...current, [activeScanJobId]: "failed" }));
+        setError("Unable to load saved graph payload for this scan.");
       });
-
-    return () => {
-      cancelled = true;
-    };
   }, [activeOperation, activeScanJobId, scanLoadStateByJobId, scanResultsByJobId]);
 
   useEffect(() => {
@@ -1332,6 +1443,20 @@ function App() {
                           <div className="scan-item-meta">{job.profile_name}</div>
                           <div className="scan-item-meta">{job.target}</div>
                           <div className="scan-item-meta">{formatStamp(job.created_at)}</div>
+                          {scanProgressByJobId[job.id] && (job.status === "queued" || job.status === "running") ? (
+                            <div className="scan-progress-row">
+                              <div className="scan-progress-track">
+                                <div
+                                  className="scan-progress-fill"
+                                  style={{ width: `${Math.max(2, Math.min(100, scanProgressByJobId[job.id].progress_percent))}%` }}
+                                />
+                              </div>
+                              <div className="scan-item-meta">
+                                {Math.round(scanProgressByJobId[job.id].progress_percent)}% · {scanProgressByJobId[job.id].scanned_hosts}/
+                                {scanProgressByJobId[job.id].total_hosts || "?"} hosts
+                              </div>
+                            </div>
+                          ) : null}
                         </button>
                       );
                     })
@@ -1391,6 +1516,12 @@ function App() {
                 ) : null}
 
                 <span>{activeOperation?.name || "Open an operation"}</span>
+                {activeScanProgress && (activeScanProgress.status === "queued" || activeScanProgress.status === "running") ? (
+                  <span>
+                    {Math.round(activeScanProgress.progress_percent)}% · {activeScanProgress.scanned_hosts}/
+                    {activeScanProgress.total_hosts || "?"} hosts
+                  </span>
+                ) : null}
               </div>
             </div>
 

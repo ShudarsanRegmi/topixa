@@ -1,9 +1,13 @@
 use roxmltree::Document;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs;
+use std::io::{BufRead, BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
@@ -137,6 +141,41 @@ struct RenameScanInput {
 struct DeleteScanInput {
     operation_id: String,
     scan_id: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct EnqueueQueuedScanInput {
+    operation_id: String,
+    scan_id: String,
+}
+
+#[derive(Clone, Serialize)]
+struct ScanQueueProgress {
+    operation_id: String,
+    scan_id: String,
+    status: String,
+    progress_percent: f32,
+    scanned_hosts: usize,
+    total_hosts: usize,
+    message: Option<String>,
+}
+
+#[derive(Clone)]
+struct QueueTask {
+    operation_id: String,
+    scan_id: String,
+}
+
+#[derive(Default)]
+struct QueueState {
+    running: bool,
+    pending: VecDeque<QueueTask>,
+    progress_by_scan_id: HashMap<String, ScanQueueProgress>,
+}
+
+#[derive(Default)]
+struct AppRuntimeState {
+    queue: Arc<Mutex<QueueState>>,
 }
 
 fn now_timestamp() -> String {
@@ -314,6 +353,78 @@ fn split_flags(flags: &str) -> Vec<String> {
         .collect()
 }
 
+fn estimate_target_host_count(target: &str) -> usize {
+    let trimmed = target.trim();
+    if trimmed.is_empty() {
+        return 1;
+    }
+
+    if trimmed.contains(',') {
+        let total = trimmed
+            .split(',')
+            .map(|part| estimate_target_host_count(part))
+            .sum::<usize>();
+        return total.max(1);
+    }
+
+    if let Some((_, prefix)) = trimmed.rsplit_once('/') {
+        if let Ok(prefix_bits) = prefix.parse::<u32>() {
+            if prefix_bits <= 32 {
+                let hosts = 2u64.saturating_pow(32 - prefix_bits);
+                return hosts.min(65_536) as usize;
+            }
+        }
+    }
+
+    if let Some((base, end_part)) = trimmed.rsplit_once('-') {
+        if let Some((prefix, start_part)) = base.rsplit_once('.') {
+            let _ = prefix;
+            if let (Ok(start), Ok(end)) = (start_part.parse::<u16>(), end_part.parse::<u16>()) {
+                if end >= start {
+                    return (end - start + 1) as usize;
+                }
+            }
+        }
+    }
+
+    1
+}
+
+fn parse_nmap_about_percent(line: &str) -> Option<f32> {
+    let about_index = line.find("About ")? + 6;
+    let rest = &line[about_index..];
+    let percent_index = rest.find("%")?;
+    let percent_text = rest[..percent_index].trim();
+    percent_text.parse::<f32>().ok()
+}
+
+fn update_scan_job_status_and_summary(
+    store: &mut OperationStore,
+    operation_id: &str,
+    scan_id: &str,
+    status: &str,
+    result_summary: Option<String>,
+    finished_at: Option<String>,
+) -> Result<(), String> {
+    let operation = store
+        .operations
+        .iter_mut()
+        .find(|operation| operation.id == operation_id)
+        .ok_or_else(|| "operation not found".to_string())?;
+
+    let job = operation
+        .scan_jobs
+        .iter_mut()
+        .find(|job| job.id == scan_id)
+        .ok_or_else(|| "scan job not found".to_string())?;
+
+    job.status = status.to_string();
+    job.result_summary = result_summary;
+    job.finished_at = finished_at;
+    operation.updated_at = now_timestamp();
+    Ok(())
+}
+
 fn output_requires_root(stderr: &str) -> bool {
     let lowered = stderr.to_lowercase();
     lowered.contains("requires root privileges")
@@ -322,6 +433,8 @@ fn output_requires_root(stderr: &str) -> bool {
 
 fn run_nmap_process(flags: &str, target: &str, xml_output_path: &str, use_pkexec: bool) -> Result<Output, String> {
     let mut args = split_flags(flags);
+    args.push("--stats-every".to_string());
+    args.push("2s".to_string());
     args.push("-oX".to_string());
     args.push(xml_output_path.to_string());
     args.push(target.to_string());
@@ -344,6 +457,94 @@ fn run_nmap_process(flags: &str, target: &str, xml_output_path: &str, use_pkexec
     command
         .output()
         .map_err(|error| format!("failed to execute nmap: {}", error))
+}
+
+fn run_nmap_process_streaming(
+    flags: &str,
+    target: &str,
+    xml_output_path: &str,
+    use_pkexec: bool,
+    on_progress: Arc<dyn Fn(f32) + Send + Sync>,
+) -> Result<(std::process::ExitStatus, String, String), String> {
+    let mut args = split_flags(flags);
+    args.push("--stats-every".to_string());
+    args.push("2s".to_string());
+    args.push("-oX".to_string());
+    args.push(xml_output_path.to_string());
+    args.push(target.to_string());
+
+    let mut command = if use_pkexec {
+        if !has_command_in_path("pkexec") {
+            return Err("scan requires elevated privileges, but pkexec is not available".to_string());
+        }
+
+        let mut command = Command::new("pkexec");
+        command.arg("nmap");
+        command
+    } else {
+        Command::new("nmap")
+    };
+
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to execute nmap: {}", error))?;
+
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| "failed to capture nmap stdout".to_string())?;
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| "failed to capture nmap stderr".to_string())?;
+
+    let stdout_handle = thread::spawn(move || {
+        let mut reader = BufReader::new(stdout_pipe);
+        let mut output = String::new();
+        let _ = reader.read_to_string(&mut output);
+        output
+    });
+
+    let progress_callback = on_progress.clone();
+    let stderr_handle = thread::spawn(move || {
+        let mut reader = BufReader::new(stderr_pipe);
+        let mut stderr_output = String::new();
+        let mut line = String::new();
+
+        loop {
+            line.clear();
+            let bytes = reader.read_line(&mut line).unwrap_or(0);
+            if bytes == 0 {
+                break;
+            }
+
+            if let Some(percent) = parse_nmap_about_percent(&line) {
+                progress_callback(percent.clamp(0.0, 100.0));
+            }
+
+            stderr_output.push_str(&line);
+        }
+
+        stderr_output
+    });
+
+    let status = child
+        .wait()
+        .map_err(|error| format!("failed to wait for nmap: {}", error))?;
+
+    let stdout = stdout_handle
+        .join()
+        .map_err(|_| "failed to read nmap stdout".to_string())?;
+    let stderr = stderr_handle
+        .join()
+        .map_err(|_| "failed to read nmap stderr".to_string())?;
+
+    Ok((status, stdout, stderr))
 }
 
 fn extract_nmap_xml_payload(output: &str) -> Option<&str> {
@@ -488,6 +689,250 @@ fn update_operation_scan_job(
     } else {
         Err("scan job not found".to_string())
     }
+}
+
+fn update_progress_state(
+    runtime: &Arc<Mutex<QueueState>>,
+    scan_id: &str,
+    mutator: impl FnOnce(&mut ScanQueueProgress),
+) {
+    if let Ok(mut queue) = runtime.lock() {
+        if let Some(progress) = queue.progress_by_scan_id.get_mut(scan_id) {
+            mutator(progress);
+        }
+    }
+}
+
+fn execute_queued_scan_job(
+    app: &AppHandle,
+    runtime: &Arc<Mutex<QueueState>>,
+    operation_id: &str,
+    scan_id: &str,
+) -> Result<(), String> {
+    let (profile_name, target, final_flags) = {
+        let mut store = load_operation_store(app)?;
+        let operation = find_operation_mut(&mut store, operation_id)
+            .ok_or_else(|| "operation not found".to_string())?;
+        let job = operation
+            .scan_jobs
+            .iter_mut()
+            .find(|job| job.id == scan_id)
+            .ok_or_else(|| "scan job not found".to_string())?;
+
+        job.status = "running".to_string();
+        operation.updated_at = now_timestamp();
+        let tuple = (job.profile_name.clone(), job.target.clone(), job.nmap_flags.clone());
+        save_operation_store(app, &store)?;
+        tuple
+    };
+
+    let total_hosts = estimate_target_host_count(&target);
+    update_progress_state(runtime, scan_id, |progress| {
+        progress.status = "running".to_string();
+        progress.total_hosts = total_hosts;
+        progress.progress_percent = 1.0;
+        progress.scanned_hosts = 0;
+        progress.message = Some("scan started".to_string());
+    });
+
+    let start_instant = Instant::now();
+    let started_at = now_timestamp();
+    let command_preview = format!("nmap {} {}", final_flags, target);
+    let xml_output_path = env::temp_dir()
+        .join(format!("topixa-{}-nmap.xml", scan_id))
+        .to_string_lossy()
+        .to_string();
+
+    let runtime_for_progress = runtime.clone();
+    let scan_id_for_progress = scan_id.to_string();
+    let progress_callback: Arc<dyn Fn(f32) + Send + Sync> = Arc::new(move |percent| {
+        let scanned_hosts = ((percent / 100.0) * total_hosts as f32).round() as usize;
+        update_progress_state(&runtime_for_progress, &scan_id_for_progress, |progress| {
+            progress.progress_percent = percent;
+            progress.scanned_hosts = scanned_hosts.min(total_hosts);
+            progress.message = Some(format!("{:.1}% complete", percent));
+        });
+    });
+
+    let mut process_output = run_nmap_process_streaming(
+        &final_flags,
+        &target,
+        &xml_output_path,
+        false,
+        progress_callback.clone(),
+    )?;
+
+    if !process_output.0.success() && output_requires_root(&process_output.2) {
+        process_output = run_nmap_process_streaming(
+            &final_flags,
+            &target,
+            &xml_output_path,
+            true,
+            progress_callback,
+        )?;
+    }
+
+    let (status, stdout, stderr) = process_output;
+    let finished_at = now_timestamp();
+    let duration_ms = start_instant.elapsed().as_millis();
+
+    let xml_raw = fs::read_to_string(&xml_output_path)
+        .or_else(|_| {
+            extract_nmap_xml_payload(&stdout)
+                .or_else(|| extract_nmap_xml_payload(&stderr))
+                .map(|xml| xml.to_string())
+                .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "xml payload not found"))
+        })
+        .map_err(|_| {
+            let stdout_excerpt = stdout.lines().take(6).collect::<Vec<_>>().join("\n");
+            let stderr_excerpt = stderr.lines().take(6).collect::<Vec<_>>().join("\n");
+            format!(
+                "nmap did not emit XML output. stdout:\n{}\nstderr:\n{}",
+                stdout_excerpt, stderr_excerpt
+            )
+        })?;
+
+    let _ = fs::remove_file(&xml_output_path);
+
+    let (hosts, summary) = parse_nmap_xml(&xml_raw).map_err(|error| {
+        let stdout_excerpt = stdout.lines().take(6).collect::<Vec<_>>().join("\n");
+        let stderr_excerpt = stderr.lines().take(6).collect::<Vec<_>>().join("\n");
+        format!(
+            "{}\nstdout:\n{}\nstderr:\n{}",
+            error, stdout_excerpt, stderr_excerpt
+        )
+    })?;
+
+    let result_summary = format!(
+        "{} hosts up · {} hosts down · {} open ports",
+        summary.hosts_up, summary.hosts_down, summary.open_ports
+    );
+
+    let job_status = if status.success() { "completed" } else { "failed" };
+
+    if !status.success() && hosts.is_empty() {
+        let mut store = load_operation_store(app)?;
+        update_scan_job_status_and_summary(
+            &mut store,
+            operation_id,
+            scan_id,
+            job_status,
+            Some(result_summary.clone()),
+            Some(finished_at.clone()),
+        )?;
+        save_operation_store(app, &store)?;
+
+        update_progress_state(runtime, scan_id, |progress| {
+            progress.status = "failed".to_string();
+            progress.progress_percent = 100.0;
+            progress.scanned_hosts = progress.total_hosts;
+            progress.message = Some("scan failed".to_string());
+        });
+
+        return Err(format!("nmap exited with error: {}", stderr.trim()));
+    }
+
+    let execution_result = ScanExecutionResult {
+        scan_id: scan_id.to_string(),
+        operation_id: operation_id.to_string(),
+        target,
+        profile_name,
+        command: command_preview,
+        started_at,
+        finished_at: finished_at.clone(),
+        duration_ms,
+        summary,
+        hosts,
+        stdout,
+        stderr,
+        xml_output: xml_raw,
+    };
+
+    let result_id = save_scan_result(app, &execution_result)?;
+
+    let mut store = load_operation_store(app)?;
+    update_scan_job_status_and_summary(
+        &mut store,
+        operation_id,
+        scan_id,
+        job_status,
+        Some(result_summary),
+        Some(finished_at),
+    )?;
+
+    if let Some(operation) = find_operation_mut(&mut store, operation_id) {
+        if let Some(job) = operation.scan_jobs.iter_mut().find(|job| job.id == scan_id) {
+            job.result_id = Some(result_id);
+        }
+    }
+
+    save_operation_store(app, &store)?;
+
+    update_progress_state(runtime, scan_id, |progress| {
+        progress.status = job_status.to_string();
+        progress.progress_percent = 100.0;
+        progress.scanned_hosts = progress.total_hosts;
+        progress.message = Some("scan finished".to_string());
+    });
+
+    Ok(())
+}
+
+fn start_queue_worker_if_idle(app: &AppHandle, runtime: &Arc<Mutex<QueueState>>) {
+    let should_start = {
+        if let Ok(mut queue) = runtime.lock() {
+            if queue.running {
+                false
+            } else {
+                queue.running = true;
+                true
+            }
+        } else {
+            false
+        }
+    };
+
+    if !should_start {
+        return;
+    }
+
+    let app_handle = app.clone();
+    let runtime_handle = runtime.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        loop {
+            let task = {
+                if let Ok(mut queue) = runtime_handle.lock() {
+                    queue.pending.pop_front()
+                } else {
+                    None
+                }
+            };
+
+            let Some(task) = task else {
+                if let Ok(mut queue) = runtime_handle.lock() {
+                    queue.running = false;
+                }
+                break;
+            };
+
+            let result = execute_queued_scan_job(
+                &app_handle,
+                &runtime_handle,
+                &task.operation_id,
+                &task.scan_id,
+            );
+
+            if let Err(error) = result {
+                update_progress_state(&runtime_handle, &task.scan_id, |progress| {
+                    progress.status = "failed".to_string();
+                    progress.progress_percent = 100.0;
+                    progress.scanned_hosts = progress.total_hosts;
+                    progress.message = Some(error.clone());
+                });
+            }
+        }
+    });
 }
 
 fn run_nmap_scan(app: &AppHandle, input: RunScanInput) -> Result<ScanExecutionResult, String> {
@@ -834,6 +1279,83 @@ fn queue_scan_job(app: AppHandle, input: RunScanInput) -> Result<Operation, Stri
 }
 
 #[tauri::command]
+fn enqueue_queued_scan(
+    app: AppHandle,
+    state: tauri::State<AppRuntimeState>,
+    input: EnqueueQueuedScanInput,
+) -> Result<(), String> {
+    let (target, status) = {
+        let store = load_operation_store(&app)?;
+        let operation = store
+            .operations
+            .iter()
+            .find(|operation| operation.id == input.operation_id)
+            .ok_or_else(|| "operation not found".to_string())?;
+        let job = operation
+            .scan_jobs
+            .iter()
+            .find(|job| job.id == input.scan_id)
+            .ok_or_else(|| "scan job not found".to_string())?;
+
+        (job.target.clone(), job.status.clone())
+    };
+
+    if status != "queued" {
+        return Ok(());
+    }
+
+    let total_hosts = estimate_target_host_count(&target);
+
+    {
+        let mut queue = state
+            .queue
+            .lock()
+            .map_err(|_| "failed to lock queue state".to_string())?;
+
+        if !queue.pending.iter().any(|task| task.scan_id == input.scan_id) {
+            queue.pending.push_back(QueueTask {
+                operation_id: input.operation_id.clone(),
+                scan_id: input.scan_id.clone(),
+            });
+        }
+
+        queue.progress_by_scan_id.insert(
+            input.scan_id.clone(),
+            ScanQueueProgress {
+                operation_id: input.operation_id.clone(),
+                scan_id: input.scan_id.clone(),
+                status: "queued".to_string(),
+                progress_percent: 0.0,
+                scanned_hosts: 0,
+                total_hosts,
+                message: Some("queued".to_string()),
+            },
+        );
+    }
+
+    start_queue_worker_if_idle(&app, &state.queue);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_scan_progress(
+    state: tauri::State<AppRuntimeState>,
+    operation_id: String,
+    scan_id: String,
+) -> Option<ScanQueueProgress> {
+    let Ok(queue) = state.queue.lock() else {
+        return None;
+    };
+
+    let progress = queue.progress_by_scan_id.get(&scan_id)?;
+    if progress.operation_id != operation_id {
+        return None;
+    }
+
+    Some(progress.clone())
+}
+
+#[tauri::command]
 fn rename_scan_job(app: AppHandle, input: RenameScanInput) -> Result<Operation, String> {
     let mut store = load_operation_store(&app)?;
 
@@ -918,6 +1440,7 @@ async fn run_scan(app: AppHandle, input: RunScanInput) -> Result<ScanExecutionRe
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(AppRuntimeState::default())
         .invoke_handler(tauri::generate_handler![
             get_scanner_status,
             list_scan_templates,
@@ -928,6 +1451,8 @@ pub fn run() {
             rename_scan_job,
             delete_scan_job,
             queue_scan_job,
+            enqueue_queued_scan,
+            get_scan_progress,
             run_scan,
             get_scan_result,
         ])
