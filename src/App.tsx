@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, useRef, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactFlow, {
   Background,
@@ -107,6 +107,7 @@ type FlowNodeData = {
 };
 
 type GraphNodeAppearance = "rectangle" | "circle" | "dot";
+type GraphLayout = "radial" | "linear-h" | "linear-v" | "grid";
 
 type GraphFilterState = {
   graphLimit: number;
@@ -114,6 +115,7 @@ type GraphFilterState = {
   graphPortQuery: string;
   graphHostQuery: string;
   graphNodeAppearance: GraphNodeAppearance;
+  graphLayout: GraphLayout;
 };
 
 type AppMode = "launcher" | "workspace";
@@ -125,7 +127,59 @@ const DEFAULT_GRAPH_FILTERS: GraphFilterState = {
   graphPortQuery: "",
   graphHostQuery: "",
   graphNodeAppearance: "rectangle",
+  graphLayout: "radial",
 };
+
+// Layout calculation functions for nodes
+function calculateRadialLayout(hostCount: number, index: number): { x: number; y: number } {
+  const radius = hostCount <= 1 ? 0 : Math.min(260, 130 + hostCount * 18);
+  const angle = hostCount <= 1 ? -Math.PI / 2 : (index / hostCount) * Math.PI * 2 - Math.PI / 2;
+  return {
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius,
+  };
+}
+
+function calculateLinearHorizontalLayout(hostCount: number, index: number): { x: number; y: number } {
+  const spacing = Math.min(200, 120 + hostCount * 8);
+  return {
+    x: (index - (hostCount - 1) / 2) * spacing,
+    y: 0,
+  };
+}
+
+function calculateLinearVerticalLayout(hostCount: number, index: number): { x: number; y: number } {
+  const spacing = Math.min(120, 80 + hostCount * 6);
+  return {
+    x: 0,
+    y: (index - (hostCount - 1) / 2) * spacing,
+  };
+}
+
+function calculateGridLayout(hostCount: number, index: number): { x: number; y: number } {
+  const cols = Math.ceil(Math.sqrt(hostCount));
+  const row = Math.floor(index / cols);
+  const col = index % cols;
+  const spacing = 180;
+  return {
+    x: (col - (cols - 1) / 2) * spacing,
+    y: (row - Math.ceil(hostCount / cols) / 2) * spacing,
+  };
+}
+
+function getNodeLayout(layout: GraphLayout, hostCount: number, index: number): { x: number; y: number } {
+  switch (layout) {
+    case "linear-h":
+      return calculateLinearHorizontalLayout(hostCount, index);
+    case "linear-v":
+      return calculateLinearVerticalLayout(hostCount, index);
+    case "grid":
+      return calculateGridLayout(hostCount, index);
+    case "radial":
+    default:
+      return calculateRadialLayout(hostCount, index);
+  }
+}
 
 function formatStamp(value?: string | null) {
   if (!value) {
@@ -293,6 +347,7 @@ function App() {
   const [graphFiltersByScanId, setGraphFiltersByScanId] = useState<Record<string, GraphFilterState>>({});
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const prevLayoutRef = useRef<GraphLayout | undefined>(undefined);
 
   async function refreshBootstrapData() {
     try {
@@ -437,7 +492,6 @@ function App() {
     }
 
     const hosts = filteredHosts;
-    const radius = hosts.length <= 1 ? 0 : Math.min(260, 130 + hosts.length * 18);
 
     const nodes: Node<FlowNodeData>[] = [
       {
@@ -467,9 +521,7 @@ function App() {
     const edges: Edge[] = [];
 
     hosts.forEach((host, index) => {
-      const angle = hosts.length <= 1 ? -Math.PI / 2 : (index / hosts.length) * Math.PI * 2 - Math.PI / 2;
-      const x = Math.cos(angle) * radius;
-      const y = Math.sin(angle) * radius;
+      const position = getNodeLayout(activeGraphFilters.graphLayout, hosts.length, index);
       const isSelected = selectedHostAddress === host.address;
       const openPorts = host.ports.filter((port) => port.state === "open").length;
       const isCircle = activeGraphFilters.graphNodeAppearance === "circle";
@@ -477,7 +529,7 @@ function App() {
 
       nodes.push({
         id: host.address,
-        position: { x, y },
+        position: position,
         data: {
           label: isDot ? (
             <div className="flow-node-content dot" title={`${host.hostname || host.address} · ${openPorts} open · ${host.state}`}>
@@ -523,12 +575,15 @@ function App() {
     });
 
     return { nodes, edges };
-  }, [activeScanResult, filteredHosts, selectedHostAddress, activeGraphFilters.graphNodeAppearance]);
+  }, [activeScanResult, filteredHosts, selectedHostAddress, activeGraphFilters.graphNodeAppearance, activeGraphFilters.graphLayout]);
 
   const [flowNodes, setFlowNodes, onFlowNodesChange] = useNodesState<FlowNodeData>([]);
   const [flowEdges, setFlowEdges, onFlowEdgesChange] = useEdgesState([]);
 
   useEffect(() => {
+    const layoutChanged = prevLayoutRef.current !== activeGraphFilters.graphLayout;
+    prevLayoutRef.current = activeGraphFilters.graphLayout;
+
     setFlowNodes((previous) =>
       flowGraph.nodes.map((nextNode) => {
         const existing = previous.find((node) => node.id === nextNode.id);
@@ -536,7 +591,11 @@ function App() {
           return nextNode;
         }
 
-        // Keep user-moved coordinates when node identity remains stable.
+        // If layout changed, use new positions. Otherwise preserve user-moved coordinates.
+        if (layoutChanged) {
+          return nextNode;
+        }
+
         return {
           ...nextNode,
           position: existing.position,
@@ -544,7 +603,7 @@ function App() {
       }),
     );
     setFlowEdges(flowGraph.edges);
-  }, [flowGraph, setFlowEdges, setFlowNodes]);
+  }, [flowGraph, activeGraphFilters.graphLayout, setFlowEdges, setFlowNodes]);
 
   useEffect(() => {
     if (!selectedHostAddress) {
@@ -1151,6 +1210,16 @@ function App() {
                 <option value="rectangle">Rectangle</option>
                 <option value="circle">Circle</option>
                 <option value="dot">Minimal Dot</option>
+              </select>
+            </label>
+
+            <label className="flow-filter-item">
+              <span>Layout</span>
+              <select value={activeGraphFilters.graphLayout} onChange={(event) => updateActiveGraphFilters({ graphLayout: event.currentTarget.value as GraphLayout }) }>
+                <option value="radial">Radial</option>
+                <option value="linear-h">Linear Horizontal</option>
+                <option value="linear-v">Linear Vertical</option>
+                <option value="grid">Grid</option>
               </select>
             </label>
 
