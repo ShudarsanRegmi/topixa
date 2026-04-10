@@ -141,17 +141,19 @@ function calculateRadialLayout(hostCount: number, index: number): { x: number; y
 }
 
 function calculateLinearHorizontalLayout(hostCount: number, index: number): { x: number; y: number } {
-  const spacing = Math.min(200, 120 + hostCount * 8);
+  const spacing = Math.min(190, 110 + hostCount * 5);
+  const perpendicularGap = Math.min(720, 260 + hostCount * 12);
   return {
     x: (index - (hostCount - 1) / 2) * spacing,
-    y: 0,
+    y: perpendicularGap / 2,
   };
 }
 
 function calculateLinearVerticalLayout(hostCount: number, index: number): { x: number; y: number } {
-  const spacing = Math.min(120, 80 + hostCount * 6);
+  const spacing = Math.min(150, 82 + hostCount * 4);
+  const perpendicularGap = Math.min(720, 260 + hostCount * 12);
   return {
-    x: 0,
+    x: perpendicularGap / 2,
     y: (index - (hostCount - 1) / 2) * spacing,
   };
 }
@@ -178,6 +180,23 @@ function getNodeLayout(layout: GraphLayout, hostCount: number, index: number): {
     case "radial":
     default:
       return calculateRadialLayout(hostCount, index);
+  }
+}
+
+function getRootNodePosition(layout: GraphLayout, hostCount: number): { x: number; y: number } {
+  const perpendicularGap = Math.min(720, 260 + hostCount * 12);
+
+  switch (layout) {
+    case "linear-h":
+      // Keep root centered on the horizontal axis and separate it on Y.
+      return { x: 0, y: -(perpendicularGap / 2) };
+    case "linear-v":
+      // Keep root centered on the vertical axis and separate it on X.
+      return { x: -(perpendicularGap / 2), y: 0 };
+    case "grid":
+    case "radial":
+    default:
+      return { x: 0, y: 0 };
   }
 }
 
@@ -348,7 +367,8 @@ function App() {
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const prevLayoutRef = useRef<GraphLayout | undefined>(undefined);
-
+  const prevNodeCountRef = useRef<number>(0);
+  const prevHostSignatureRef = useRef<string>("");
   async function refreshBootstrapData() {
     try {
       setError(null);
@@ -492,11 +512,12 @@ function App() {
     }
 
     const hosts = filteredHosts;
+    const rootPosition = getRootNodePosition(activeGraphFilters.graphLayout, hosts.length);
 
     const nodes: Node<FlowNodeData>[] = [
       {
         id: "__target__",
-        position: { x: 0, y: 0 },
+        position: rootPosition,
         data: {
           label: (
             <div className="flow-node-content">
@@ -584,6 +605,17 @@ function App() {
     const layoutChanged = prevLayoutRef.current !== activeGraphFilters.graphLayout;
     prevLayoutRef.current = activeGraphFilters.graphLayout;
 
+    const hostNodes = flowGraph.nodes.filter((node) => node.id !== "__target__");
+    const hostNodeCount = hostNodes.length;
+    const nodeCountChanged = prevNodeCountRef.current !== hostNodeCount;
+    prevNodeCountRef.current = hostNodeCount;
+
+    // Re-layout when the host set/order changes even if count stays the same.
+    const hostSignature = hostNodes.map((node) => node.id).join("|");
+    const hostSignatureChanged = prevHostSignatureRef.current !== hostSignature;
+    prevHostSignatureRef.current = hostSignature;
+
+
     setFlowNodes((previous) =>
       flowGraph.nodes.map((nextNode) => {
         const existing = previous.find((node) => node.id === nextNode.id);
@@ -591,8 +623,8 @@ function App() {
           return nextNode;
         }
 
-        // If layout changed, use new positions. Otherwise preserve user-moved coordinates.
-        if (layoutChanged) {
+        // Recalculate positions when layout or visible host set changes.
+        if (layoutChanged || nodeCountChanged || hostSignatureChanged) {
           return nextNode;
         }
 
@@ -1303,15 +1335,8 @@ function App() {
       );
     }
 
-    if (filteredHosts.length === 0) {
-      return (
-        <div className="graph-empty">
-          <strong>No hosts match current graph filters.</strong>
-          <p>Clear filters or adjust the query/port constraints to show nodes.</p>
-        </div>
-      );
-    }
-
+    // Always show canvas, even when no hosts match filters
+    // This ensures controls remain visible for adjusting filters
     return renderGraphCanvas(false);
   }
 
