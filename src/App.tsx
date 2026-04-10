@@ -259,7 +259,7 @@ function hostTagClass(state: string) {
   }
 }
 
-function Icon({ name }: { name: "panelOpen" | "panelClose" | "plus" | "close" | "chevronDown" | "expand" | "compress" }) {
+function Icon({ name }: { name: "panelOpen" | "panelClose" | "plus" | "close" | "chevronDown" | "expand" | "compress" | "filter" | "clear" }) {
   if (name === "panelOpen") {
     return (
       <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -327,6 +327,25 @@ function Icon({ name }: { name: "panelOpen" | "panelClose" | "plus" | "close" | 
     );
   }
 
+  if (name === "filter") {
+    return (
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path d="M4 6h16l-6.4 7.2v4.7l-3.2 1.6v-6.3L4 6z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+
+  if (name === "clear") {
+    return (
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path d="M5 17l5.5-7.5h8.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M14.5 6h4.5v4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <line x1="8" y1="8" x2="16" y2="16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <line x1="16" y1="8" x2="8" y2="16" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
       <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
@@ -363,6 +382,7 @@ function App() {
   const [ribbonMenu, setRibbonMenu] = useState<RibbonMenu>(null);
   const [leftDrawerOpen, setLeftDrawerOpen] = useState(true);
   const [graphExpanded, setGraphExpanded] = useState(false);
+  const [graphFiltersOpen, setGraphFiltersOpen] = useState(false);
   const [graphFiltersByScanId, setGraphFiltersByScanId] = useState<Record<string, GraphFilterState>>({});
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1196,85 +1216,104 @@ function App() {
     return (
       <div className={expanded ? "flow-shell expanded" : "flow-shell"}>
         <div className="flow-toolbar">
-          <div className="flow-toolbar-info">Drag nodes, use wheel/pinch to zoom, drag canvas to pan.</div>
-          <div className="flow-filter-row">
-            <label className="flow-filter-item">
-              <span>Limit</span>
-              <select value={activeGraphFilters.graphLimit} onChange={(event) => updateActiveGraphFilters({ graphLimit: Number(event.currentTarget.value) })}>
-                <option value={0}>All</option>
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-              </select>
-            </label>
+          <div className="flow-toolbar-top">
+            <div className="flow-toolbar-info">Drag nodes, use wheel/pinch to zoom, drag canvas to pan.</div>
 
-            <label className="flow-filter-item">
-              <span>Min Open Ports</span>
-              <input
-                type="number"
-                min={0}
-                value={activeGraphFilters.graphMinOpenPorts}
-                onChange={(event) => updateActiveGraphFilters({ graphMinOpenPorts: Math.max(0, Number(event.currentTarget.value) || 0) })}
-              />
-            </label>
+            <div className="flow-quick-row">
+              <label className="flow-quick-item">
+                <span>Layout</span>
+                <select value={activeGraphFilters.graphLayout} onChange={(event) => updateActiveGraphFilters({ graphLayout: event.currentTarget.value as GraphLayout }) }>
+                  <option value="radial">Radial</option>
+                  <option value="linear-h">Linear Horizontal</option>
+                  <option value="linear-v">Linear Vertical</option>
+                  <option value="grid">Grid</option>
+                </select>
+              </label>
 
-            <label className="flow-filter-item wide">
-              <span>Require Ports (e.g. 22,80)</span>
-              <input
-                value={activeGraphFilters.graphPortQuery}
-                onChange={(event) => updateActiveGraphFilters({ graphPortQuery: event.currentTarget.value })}
-                placeholder="22,80,443"
-              />
-            </label>
+              <label className="flow-quick-item">
+                <span>Shape</span>
+                <select value={activeGraphFilters.graphNodeAppearance} onChange={(event) => updateActiveGraphFilters({ graphNodeAppearance: event.currentTarget.value as GraphNodeAppearance }) }>
+                  <option value="rectangle">Rectangle</option>
+                  <option value="circle">Circle</option>
+                  <option value="dot">Minimal Dot</option>
+                </select>
+              </label>
 
-            <label className="flow-filter-item wide">
-              <span>Host/IP Search</span>
-              <input
-                value={activeGraphFilters.graphHostQuery}
-                onChange={(event) => updateActiveGraphFilters({ graphHostQuery: event.currentTarget.value })}
-                placeholder="db-01 or 10.0.0.4"
-              />
-            </label>
+              <button
+                type="button"
+                className={graphFiltersOpen ? "icon-btn flow-toggle-btn open" : "icon-btn flow-toggle-btn"}
+                onClick={() => setGraphFiltersOpen((current) => !current)}
+                aria-label={graphFiltersOpen ? "Hide more filters" : "Show more filters"}
+                title={graphFiltersOpen ? "Hide Filters" : "More Filters"}
+              >
+                <Icon name="filter" />
+              </button>
 
-            <label className="flow-filter-item">
-              <span>Node Shape</span>
-              <select value={activeGraphFilters.graphNodeAppearance} onChange={(event) => updateActiveGraphFilters({ graphNodeAppearance: event.currentTarget.value as GraphNodeAppearance }) }>
-                <option value="rectangle">Rectangle</option>
-                <option value="circle">Circle</option>
-                <option value="dot">Minimal Dot</option>
-              </select>
-            </label>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => {
+                  updateActiveGraphFilters(DEFAULT_GRAPH_FILTERS);
+                }}
+                aria-label="Clear filters"
+                title="Clear Filters"
+              >
+                <Icon name="clear" />
+              </button>
 
-            <label className="flow-filter-item">
-              <span>Layout</span>
-              <select value={activeGraphFilters.graphLayout} onChange={(event) => updateActiveGraphFilters({ graphLayout: event.currentTarget.value as GraphLayout }) }>
-                <option value="radial">Radial</option>
-                <option value="linear-h">Linear Horizontal</option>
-                <option value="linear-v">Linear Vertical</option>
-                <option value="grid">Grid</option>
-              </select>
-            </label>
-
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => {
-                updateActiveGraphFilters(DEFAULT_GRAPH_FILTERS);
-              }}
-            >
-              Clear Filters
-            </button>
-
-            <button
-              type="button"
-              className="icon-btn graph-expand-icon-btn"
-              onClick={() => setGraphExpanded((current) => !current)}
-              aria-label={expanded ? "Exit expanded graph" : "Expand graph"}
-              title={expanded ? "Exit expanded graph" : "Expand graph"}
-            >
-              <Icon name={expanded ? "compress" : "expand"} />
-            </button>
+              <button
+                type="button"
+                className="icon-btn graph-expand-icon-btn"
+                onClick={() => setGraphExpanded((current) => !current)}
+                aria-label={expanded ? "Exit expanded graph" : "Expand graph"}
+                title={expanded ? "Exit expanded graph" : "Expand graph"}
+              >
+                <Icon name={expanded ? "compress" : "expand"} />
+              </button>
+            </div>
           </div>
+
+          {graphFiltersOpen && (
+            <div className="flow-filter-row">
+              <label className="flow-filter-item">
+                <span>Limit</span>
+                <select value={activeGraphFilters.graphLimit} onChange={(event) => updateActiveGraphFilters({ graphLimit: Number(event.currentTarget.value) })}>
+                  <option value={0}>All</option>
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                </select>
+              </label>
+
+              <label className="flow-filter-item">
+                <span>Min Open Ports</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={activeGraphFilters.graphMinOpenPorts}
+                  onChange={(event) => updateActiveGraphFilters({ graphMinOpenPorts: Math.max(0, Number(event.currentTarget.value) || 0) })}
+                />
+              </label>
+
+              <label className="flow-filter-item wide">
+                <span>Require Ports (e.g. 22,80)</span>
+                <input
+                  value={activeGraphFilters.graphPortQuery}
+                  onChange={(event) => updateActiveGraphFilters({ graphPortQuery: event.currentTarget.value })}
+                  placeholder="22,80,443"
+                />
+              </label>
+
+              <label className="flow-filter-item wide">
+                <span>Host/IP Search</span>
+                <input
+                  value={activeGraphFilters.graphHostQuery}
+                  onChange={(event) => updateActiveGraphFilters({ graphHostQuery: event.currentTarget.value })}
+                  placeholder="db-01 or 10.0.0.4"
+                />
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="flow-canvas">

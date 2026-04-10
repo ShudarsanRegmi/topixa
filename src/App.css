@@ -807,10 +807,18 @@ label span {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
   padding: 0 2px;
   color: var(--text-soft);
   font-size: 12px;
+}
+
+.flow-toolbar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
 }
 
 .flow-toolbar-info {
@@ -818,11 +826,53 @@ label span {
   font-size: 12px;
 }
 
+.flow-quick-row {
+  display: inline-flex;
+  align-items: end;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.flow-quick-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 128px;
+}
+
+.flow-quick-item span {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 9px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.flow-quick-item select {
+  border-radius: var(--radius-xs);
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.flow-toggle-btn {
+  align-self: flex-end;
+}
+
+.flow-toggle-btn.open {
+  border-color: rgba(63, 140, 255, 0.7);
+  color: #e7f1ff;
+}
+
 .flow-filter-row {
   display: grid;
-  grid-template-columns: 92px 132px minmax(180px, 1fr) minmax(180px, 1fr) 120px auto auto;
+  grid-template-columns: 92px 132px minmax(200px, 1fr) minmax(220px, 1fr);
   gap: 6px;
   align-items: end;
+  border: 1px solid rgba(79, 100, 132, 0.55);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  background: rgba(20, 31, 46, 0.55);
 }
 
 .flow-filter-item {
@@ -1454,7 +1504,21 @@ label span {
 
   .flow-toolbar {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .flow-toolbar-top {
+    flex-direction: column;
     align-items: flex-start;
+  }
+
+  .flow-quick-row {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .flow-quick-item {
+    min-width: 140px;
   }
 
   .flow-filter-row {
